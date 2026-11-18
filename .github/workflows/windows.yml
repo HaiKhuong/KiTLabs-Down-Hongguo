@@ -182,10 +182,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/windows-release | Out-Null
-          $version = (Get-Content package.json | ConvertFrom-Json).version -replace '^(\d+\.\d+)\.0$', '$1'
-          Copy-Item "dist/红果短剧-$version-便携版.exe" "dist/windows-release/hongguo-downloader-$version-win-x64.exe"
+          $package = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
+          $version = $package.version -replace '^(\d+\.\d+)\.0$', '$1'
+          $portableArtifact = $package.build.portable.artifactName.Replace('${productName}', $package.build.productName).Replace('${version}', $package.version).Replace('${ext}', 'exe')
+          $installerArtifact = $package.build.nsis.artifactName.Replace('${productName}', $package.build.productName).Replace('${version}', $package.version).Replace('${ext}', 'exe')
+          Copy-Item "dist/$portableArtifact" "dist/windows-release/hongguo-downloader-$version-win-x64.exe"
           Compress-Archive -LiteralPath "dist/windows-release/hongguo-downloader-$version-win-x64.exe" -DestinationPath "dist/windows-release/hongguo-downloader-$version-win-x64.zip"
-          Copy-Item "dist/hongguo-downloader-$version-win-x64-setup.exe" dist/windows-release/
+          Copy-Item "dist/$installerArtifact" dist/windows-release/
           Copy-Item dist/latest.yml dist/windows-release/
           Copy-Item dist/*.blockmap dist/windows-release/
           Copy-Item media/*corresponding-source.tar.gz dist/windows-release/

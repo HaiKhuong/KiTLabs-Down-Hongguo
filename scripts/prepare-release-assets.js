@@ -27,9 +27,9 @@ const SLUG = pkg.name; // hongguo-downloader
 // 本地产物名（中文） -> Release 资产名（ASCII）
 const MAP = [
   { from: `${PRODUCT}-${VERSION}-win-x64.zip`, to: `${SLUG}-${VERSION}-win-x64.zip`, desc: '绿色版 zip（推荐）' },
-  { from: `${SLUG}-${VERSION}-win-x64-setup.exe`, to: `${SLUG}-${VERSION}-win-x64-setup.exe`, desc: '支持应用内更新的 NSIS 安装包' },
+  { from: `${PRODUCT}-${VERSION}-win-x64-setup.exe`, to: `${PRODUCT}-${VERSION}-win-x64-setup.exe`, desc: '支持应用内更新的 NSIS 安装包' },
   { from: 'latest.yml', to: 'latest.yml', desc: 'Windows 更新元数据' },
-  { from: `${PRODUCT}-${VERSION}-便携版.exe`, to: `${SLUG}-${VERSION}-portable.exe`, desc: '便携单文件' },
+  { from: `${PRODUCT}-${VERSION}.exe`, to: `${SLUG}-${VERSION}-portable.exe`, desc: '便携单文件' },
 ];
 
 function findInDist(name) {

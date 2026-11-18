@@ -83,7 +83,8 @@ for (const current of ['5.0', '5.0.0']) {
   }
 }
 for (const artifact of [pkg.build.artifactName, pkg.build.portable.artifactName, pkg.build.nsis.artifactName, pkg.build.linux.artifactName]) {
-  assert(artifact.includes(`-${publicVersion}-`), 'Download filenames must contain the two-part release version');
+  assert(artifact.includes(`-${publicVersion}-`) || artifact.includes(`-${publicVersion}.`),
+    'Download filenames must contain the two-part release version');
   assert(!artifact.includes('${version}'), 'Raw internal versions must not leak into download filenames');
 }
 

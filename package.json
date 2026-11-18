@@ -107,7 +107,7 @@
       ]
     },
     "portable": {
-      "artifactName": "${productName}-7.5-便携版.${ext}"
+      "artifactName": "${productName}-7.5.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -115,7 +115,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "KiTLabs Downloader",
-      "artifactName": "hongguo-downloader-7.5-win-x64-setup.${ext}"
+      "artifactName": "${productName}-7.5-win-x64-setup.${ext}"
     },
     "mac": {
       "target": [
