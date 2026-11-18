@@ -71,7 +71,7 @@ const rendererSecurity = require('./src/native/renderer-security').createRendere
 const attachFloatingPlayerWindow = require('./src/native/floating-player-window');
 const APP_VERSION = app.getVersion() || '1.0.0';
 
-const APP_TITLE = IS_PREVIEW ? '红果短剧预览' : '红果短剧';
+const APP_TITLE = IS_PREVIEW ? 'KiTLabs Downloader Preview' : 'KiTLabs Downloader';
 const { createStealthController } = require('./src/native/stealth-window');
 const { DEFAULT_STEALTH_WAKE_REGION, validateStealthWakeRegion, normalizeStealthWakeRegion } = require('./src/native/stealth-region');
 const { createBossKeyController } = require('./src/native/boss-key');
@@ -5710,7 +5710,7 @@ ipcMain.handle('get-episode-danmaku', async (_event, options) => {
 
 function applyInterfaceLanguage(language) {
   const label = (zh, en, vi) => language === 'en' ? en : language === 'vi' ? (vi ?? en) : zh;
-  const appName = label(APP_TITLE, IS_PREVIEW ? 'KiTLabs Downloader Preview' : 'KiTLabs Downloader', IS_PREVIEW ? 'KiTLabs Downloader (Xem trước)' : 'KiTLabs Downloader');
+  const appName = APP_TITLE;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle?.(appName);
   if (process.platform !== 'darwin') return;
   Menu.setApplicationMenu(Menu.buildFromTemplate([

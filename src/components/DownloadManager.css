@@ -266,7 +266,7 @@
 }
 .dm-drama-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
   padding: 12px 16px;
   cursor: pointer;
@@ -341,6 +341,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  align-self: center;
   gap: 8px;
   flex-shrink: 0;
   margin-left: auto;
@@ -403,7 +404,7 @@
 .dm-ep-table tbody tr.is-selected { background: #48242E55; }
 .dm-ep-table .col-check { width: 40px; text-align: center; }
 .dm-ep-table .col-check input { accent-color: #EF4758; cursor: pointer; }
-.dm-ep-table .col-size { width: 100px; }
+.dm-ep-table .col-size { min-width: 120px; width: auto; white-space: nowrap; }
 .dm-ep-table .col-actions { width: 130px; text-align: right; }
 
 .dm-ep-cell { display: flex; align-items: center; gap: 8px; color: #F5F5F7; font-weight: 500; }
@@ -431,7 +432,7 @@
 .dm-row-progress-fill { height: 100%; border-radius: 999px; background: #34C995; }
 .dm-row-progress-fill.is-downloading { background: #60A5FA; }
 .dm-row-progress-fill.is-pending { background: #A1A1B0; }
-.dm-size-text, .dm-muted { color: #A1A1B0; font-variant-numeric: tabular-nums; }
+.dm-size-text, .dm-muted { color: #A1A1B0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dm-row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
 
 /* 10. Table Footer & Pagination */

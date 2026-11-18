@@ -51,7 +51,7 @@
   },
   "build": {
     "appId": "io.github.jackotom.hongguo-drama-mac",
-    "productName": "红果短剧",
+    "productName": "KiTLabs Downloader",
     "directories": {
       "output": "dist"
     },
@@ -114,7 +114,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "红果短剧下载器",
+      "shortcutName": "KiTLabs Downloader",
       "artifactName": "hongguo-downloader-7.5-win-x64-setup.${ext}"
     },
     "mac": {
