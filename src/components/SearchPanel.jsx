@@ -1,7 +1,7 @@
 import { t, useLanguage } from '../i18n';
 import React, { useState, useRef, useEffect } from 'react';
 import './HongguoDownload.css';
-import { Search, Film, RefreshCw, ExternalLink } from './icons';
+import { Search, Film, RefreshCw, ExternalLink, X, Eye, ChevronDown } from './icons';
 import { isSubmitKey } from './episodeRange';
 import { readSearchHistory, saveSearchTerm, removeSearchTerm, clearSearchHistory, rememberCatalogTitles, getSearchSuggestions } from '../searchHistory';
 
@@ -15,7 +15,7 @@ const SEARCH_SAFETY_TIMEOUT_MS = 25000;
  * SearchPanel —— 按所选来源搜索短剧
  * 拿到 series_id 后交给父组件走既有的「拉全集 + 选集下载」流程。
  */
-function SearchPanel({ onSelectSeries, onViewSeries, onSwitchToInput, active = true }) {
+function SearchPanel({ onSelectSeries, onViewSeries, onSwitchToInput, onResolveInput, externalQuery = '', compactWelcome = false, active = true }) {
   useLanguage();
   const [source, setSource] = useState('all');
   const { sources: mediaSources, revision: sourceRevision, loading: sourcesLoading, error: sourcesError } = useMediaSources();
@@ -23,6 +23,7 @@ function SearchPanel({ onSelectSeries, onViewSeries, onSwitchToInput, active = t
   const pendingSearch = useRef(null);
   useEffect(() => () => { requestVersion.current++; cancelMore(); }, []);
   const [keyword, setKeyword] = useState('');
+  const lastExternalQuery = useRef('');
   const [history, setHistory] = useState(readSearchHistory);
   const [historyError, setHistoryError] = useState('');
   const inputRef = useRef(null);
@@ -94,6 +95,13 @@ function SearchPanel({ onSelectSeries, onViewSeries, onSwitchToInput, active = t
     setSearchWarning('');
     setMore({}); setMoreError(''); setMoreLoading(false); cancelMore();
   };
+
+  useEffect(() => {
+    if (!active || !externalQuery || externalQuery === lastExternalQuery.current) return;
+    lastExternalQuery.current = externalQuery;
+    setKeyword(externalQuery);
+    setTimeout(() => { inputRef.current?.form?.requestSubmit?.(); }, 0);
+  }, [active, externalQuery]);
 
   const clearHistory = () => {
     try {
@@ -304,134 +312,193 @@ function SearchPanel({ onSelectSeries, onViewSeries, onSwitchToInput, active = t
     finish();
   };
 
-  const matchedCount = results ? results.filter(item => item.relevance < 2).length : 0;
-  const contentCount = results ? results.filter(item => item.relevance === 2 && !item.fuzzy).length : 0;
-  const fuzzyCount = results ? results.filter(item => item.fuzzy).length : 0;
-  const otherCount = results ? results.filter(item => item.relevance > 2 && !item.fuzzy).length : 0;
+  const exactMatches = results ? results.filter(item => item.relevance < 2 && !item.fuzzy) : [];
+  const additionalMatches = results ? results.filter(item => item.relevance >= 2 || item.fuzzy) : [];
+
+  const renderResultCard = (item) => {
+    const epCount = Number(item.total) || Number(item.episode_count) || 0;
+    const isPicking = pickingId === item.series_id;
+    const hasMetaLine = epCount > 0 || item.completion_status === 'completed' || item.completion_status === 'ongoing' || Boolean(item.tags?.[0]);
+    return (
+      <div className="search-card-item" key={`${item.source}:${item.series_id}`}>
+        <article
+          className={`search-card ${isPicking ? 'picking' : ''}`}
+          tabIndex={0}
+          onClick={() => pickingId === '' && pick(item)}
+          onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && pickingId === '') { e.preventDefault(); pick(item); } }}
+          title={`${t(onViewSeries ? '点击播放' : '点击查看并下载')}: ${item.series_title}`}
+        >
+          <div className="search-cover">
+            {item.cover ? (
+              <img src={item.cover} alt={item.series_title} loading="lazy" />
+            ) : (
+              <div className="cover-placeholder"><Film size={22} /></div>
+            )}
+          </div>
+          <div className="search-card-body">
+            <div className="search-card-title">{item.series_title}</div>
+            <div className="search-card-meta-stack">
+              <div className="search-card-badges">
+                <span className="sr-badge sr-badge-source">{t(mediaSourceLabel(item.source, mediaSources))}</span>
+                {item.tags?.[0] && <span className="sr-badge">{t(item.tags[0])}</span>}
+                {item.new_release && <span className="badge-new">{t(item.released_today ? '今日上新' : 'App 新剧')}</span>}
+              </div>
+              {(epCount > 0 || item.completion_status === 'completed' || item.completion_status === 'ongoing') && (
+                <div className="search-card-badges">
+                  {epCount > 0 && <span className="sr-badge">{t("{0} 集", [epCount])}</span>}
+                  {item.completion_status === 'completed' && <span className="sr-badge">{t("已完结")}</span>}
+                  {item.completion_status === 'ongoing' && <span className="sr-badge">{t("更新中")}</span>}
+                </div>
+              )}
+            </div>
+            <div className="search-card-actions">
+              <button
+                type="button"
+                className="btn btn-outline btn-sm sr-view-btn"
+                disabled={pickingId !== ''}
+                onClick={(e) => { e.stopPropagation(); if (pickingId === '') pick(item); }}
+              >
+                {isPicking ? <><RefreshCw size={13} className="spin" /><span>{t("正在拉取分集…")}</span></>
+                  : <><Eye size={13} /><span>{t("查看剧集")}</span></>}
+              </button>
+            </div>
+          </div>
+        </article>
+        {onViewSeries && <button className="mobile-drama-details" disabled={pickingId !== ''} aria-label={t(`详情与下载：${item.series_title}`)} onClick={() => pick(item, true)}>{t("详情与下载")}</button>}
+      </div>
+    );
+  };
 
   return (
-    <div className="hongguo-card">
-      <div className="card-header-title">
-        <Search size={18} />
-        <span>{t("搜索短剧")}</span>
-        <label className="source-control">{t("来源")}<select className="input-field" aria-label={t("短剧来源")} value={source} onChange={(e) => switchSource(e.target.value)}><option value="all">{t("全部来源")}</option>{mediaSources.map(({ id, label }) => <option key={id} value={id}>{id.startsWith('custom:') ? label : t(label)}</option>)}</select></label>
-      </div>
-
+    <div className="hongguo-card sr-panel">
       {sourcesError && <p className="settings-hint" role="status">{t("来源列表更新失败，暂用上次列表；可在设置重新保存来源后重试。")}</p>}
-      <div className="input-group">
-        <input
-          type="text"
-          className="input-field"
-          aria-label={t("搜索短剧名称")}
-          aria-describedby="search-suggestions-hint"
-          ref={inputRef}
-          list="local-search-suggestions"
-          autoComplete="off"
-          placeholder={t("输入剧名，例如：一村人养一个神")}
-          value={keyword}
-          onChange={(e) => changeKeyword(e.target.value)}
-          onKeyDown={(e) => isSubmitKey(e) && doSearch()}
-        />
-        <button className="btn btn-primary" onClick={doSearch} disabled={loading || sourcesLoading}>
+
+      {/* 2. Single-row Search Controls */}
+      <div className="input-group sr-search-row">
+        <div className="unified-input-wrap">
+          {loading
+            ? <RefreshCw size={15} className="spin unified-input-icon is-loading" />
+            : <Search size={15} className="unified-input-icon" />}
+          <input
+            type="text"
+            className={`input-field sr-search-input ${loading ? 'has-inline-loading' : ''} ${keyword ? 'has-value' : ''}`}
+            aria-label={t("搜索短剧名称")}
+            ref={inputRef}
+            list="local-search-suggestions"
+            autoComplete="off"
+            placeholder={t("输入剧名，例如：一村人养一个神")}
+            value={keyword}
+            onChange={(e) => changeKeyword(e.target.value)}
+            onKeyDown={(e) => {
+              if (!isSubmitKey(e)) return;
+              const trimmed = keyword.trim();
+              if (onResolveInput && (/^https?:\/\//i.test(trimmed) || /^\d{5,30}$/.test(trimmed) || /series_id=\d+/i.test(trimmed))) {
+                onResolveInput(trimmed);
+              } else {
+                doSearch();
+              }
+            }}
+          />
+          {loading && (
+            <span className="sr-inline-loading" role="status">{t("正在寻找相关短剧，首次加载可能需要几秒…")}</span>
+          )}
+          {!keyword && !loading && (
+            <ChevronDown size={14} className="sr-datalist-arrow" />
+          )}
+          {keyword && !loading && (
+            <button type="button" className="unified-clear-btn" aria-label={t("清空")} title={t("清空")} onClick={() => { changeKeyword(''); inputRef.current?.focus(); }}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <select className="input-field sr-source-select" aria-label={t("短剧来源")} value={source} onChange={(e) => switchSource(e.target.value)}>
+          <option value="all">{t("全部来源")}</option>
+          {mediaSources.map(({ id, label }) => <option key={id} value={id}>{id.startsWith('custom:') ? label : t(label)}</option>)}
+        </select>
+        <button type="button" className="btn btn-outline" disabled={loading} onClick={async () => {
+          try {
+            const text = (await navigator.clipboard.readText()).trim();
+            if (!text || text.length > 4096) return;
+            changeKeyword(text);
+            if (onResolveInput && (/^https?:\/\//i.test(text) || /^\d{5,30}$/.test(text) || /series_id=\d+/i.test(text))) {
+              onResolveInput(text);
+            }
+          } catch {}
+        }}>{t("粘贴链接")}</button>
+        <button className="btn btn-primary" onClick={() => {
+          const trimmed = keyword.trim();
+          if (onResolveInput && (/^https?:\/\//i.test(trimmed) || /^\d{5,30}$/.test(trimmed) || /series_id=\d+/i.test(trimmed))) {
+            onResolveInput(trimmed);
+          } else {
+            doSearch();
+          }
+        }} disabled={loading || sourcesLoading}>
           {loading ? (
-            <>
-              <RefreshCw size={16} className="spin" />
-              <span>{t("搜索中...")}</span>
-            </>
+            <><RefreshCw size={15} className="spin" /><span>{t("搜索中...")}</span></>
           ) : (
-            <>
-              <Search size={16} />
-              <span>{t("搜索")}</span>
-            </>
+            <><Search size={15} /><span>{t("搜索")}</span></>
           )}
         </button>
       </div>
       <datalist id="local-search-suggestions">
         {suggestions.map(({ term, source: origin }) => <option key={term} value={term} label={origin} />)}
       </datalist>
-      <p className="settings-hint search-suggestions-hint" id="search-suggestions-hint">{t("本机联想：匹配搜索历史和本次浏览过的真实剧名。")}</p>
-      {history.length > 0 && <div className="search-history">
-        <div className="search-history-heading"><span>{t("本机搜索历史")}</span><button type="button" className="btn-chip" onClick={clearHistory}>{t("清除历史")}</button></div>
-        <div className="search-history-terms">{history.map((term) => <span className="search-history-term" key={term}><button type="button" className="btn-chip" title={term} onClick={() => { changeKeyword(term); inputRef.current?.focus(); }}>{term}</button><button type="button" className="search-history-remove" aria-label={t(`删除搜索历史：${term}`)} title={t("删除这条搜索历史")} onClick={() => removeHistory(term)}>×</button></span>)}</div>
-      </div>}
-      {historyError && <p className="search-history-error" role="alert">{t(historyError)}</p>}
-      <p className="settings-hint" style={{ marginTop: 8 }}>
-        {t(onViewSeries ? '点海报直接播放；详情与下载可单独打开。' : source === 'all' ? '同时搜索所有已启用来源，结果标明来源；选择一部即可查看全部剧集。' : '按剧名查找，选择一部即可查看全部剧集。')}
-      </p>
 
-      {results === null && !loading && !error && (
-        <div className="search-welcome"><Search size={36} /><h3>{t("好故事，从一个名字开始")}</h3><p>{t("输入完整剧名或关键词，发现你想看的短剧。")}</p></div>
+      {results === null && !loading && !error && !compactWelcome && (
+        <div className="search-welcome"><Search size={32} /><h3>{t("好故事，从一个名字开始")}</h3><p>{t("输入完整剧名或关键词，发现你想看的短剧。")}</p></div>
       )}
       {error && <div className="alert alert-error" role="alert">{t(error)}</div>}
       {searchWarning && <p className="settings-hint" role="status">{t(searchWarning)}{t(" 已显示本次查到的结果。")}</p>}
-
-      {loading && (
-        <div className="search-loading">
-          <RefreshCw size={18} className="spin" />
-          <span>{t("正在寻找相关短剧，首次加载可能需要几秒…")}</span>
-        </div>
-      )}
 
       {results && results.length === 0 && !loading && !error && (
         <div className="search-empty">
           <p>{t("没有找到相关短剧")}{t(pageTitle ? `（页面标题：${pageTitle}）` : '')}</p>
           <div className="search-empty-actions">
-            {source === 'hongguo' && <button className="btn btn-outline" onClick={showBrowser}>
-              <ExternalLink size={15} />{t("打开来源页面")}</button>}
-            {source === 'hongguo' && onSwitchToInput && (
-              <button className="btn btn-outline" onClick={onSwitchToInput}>{t("改用链接 / ID 下载")}</button>
-            )}
+            {source === 'hongguo' && <button className="btn btn-outline" onClick={showBrowser}><ExternalLink size={15} />{t("打开来源页面")}</button>}
+            {source === 'hongguo' && onSwitchToInput && <button className="btn btn-outline" onClick={onSwitchToInput}>{t("改用链接 / ID 下载")}</button>}
           </div>
         </div>
       )}
 
       {results && results.length > 0 && (
-        <>
-          <div className="search-count">{t("找到 ")}{t(matchedCount)}{t(" 部标题匹配短剧")}{t(contentCount ? `，另有 ${contentCount} 部剧情提到该词（排在后面）` : '')}{t(fuzzyCount ? `，另有 ${fuzzyCount} 部补搜结果` : '')}{t(otherCount ? `，另有 ${otherCount} 部来源返回的其他结果（排在后面）` : '')}</div>
-          <div className="search-grid">
-            {results.map((item) => (
-              <div className="search-card-item" key={`${item.source}:${item.series_id}`}>
-              <button
-                type="button"
-                disabled={pickingId !== ''}
-                className={`search-card ${pickingId === item.series_id ? 'picking' : ''}`}
-                onClick={() => pickingId === '' && pick(item)}
-                title={`${t(onViewSeries ? '点击播放' : '点击查看并下载')}: ${item.series_title}`}
-              >
-                <div className="search-cover">
-                  {item.cover ? (
-                    <img src={item.cover} alt={item.series_title} loading="lazy" />
-                  ) : (
-                    <div className="cover-placeholder">
-                      <Film size={22} />
-                    </div>
-                  )}
-                </div>
-                <div className="search-card-body">
-                  <div className="search-card-title">{item.series_title}</div>
-                  <div className="search-card-sub">
-                    {pickingId === item.series_id ? (
-                      <>
-                        <RefreshCw size={13} className="spin" />{t(" 正在拉取分集…")}</>
-                    ) : (
-                      <><span className="badge">{mediaSourceLabel(item.source, mediaSources)}</span>{item.new_release && <span className="badge-new">{t(item.released_today ? '今日上新' : 'App 新剧')}</span>}{t(item.fuzzy ? '补搜结果 · 查看剧集' : item.relevance === 2 ? '剧情相关 · 查看剧集' : item.relevance > 2 ? '其他结果 · 查看剧集' : '查看剧集')}</>
-                    )}
-                  </div>
-                </div>
-              </button>
-              {onViewSeries && <button className="mobile-drama-details" disabled={pickingId !== ''} aria-label={t(`详情与下载：${item.series_title}`)} onClick={() => pick(item, true)}>{t("详情与下载")}</button>}
-              </div>
-            ))}
+        <div className="sr-results-wrap">
+          {/* 4. Results Header */}
+          <div className="sr-results-header">
+            <div className="sr-results-summary">
+              <span className="sr-results-count">{t("找到 ")}{results.length}{t(" 部标题匹配短剧")}</span>
+              {searchedKeyword && <span className="sr-keyword-pill">“{searchedKeyword}”</span>}
+            </div>
           </div>
+
+          {exactMatches.length > 0 && (
+            <>
+              {additionalMatches.length > 0 && <div className="sr-section-label">{t("搜索短剧")} ({exactMatches.length})</div>}
+              <div className="search-grid">
+                {exactMatches.map(renderResultCard)}
+              </div>
+            </>
+          )}
+
+          {additionalMatches.length > 0 && (
+            <>
+              <div className="sr-section-label">
+                {t("补搜结果 · 查看剧集").split('·')[0].trim()} ({additionalMatches.length})
+              </div>
+              <div className="search-grid">
+                {additionalMatches.map(renderResultCard)}
+              </div>
+            </>
+          )}
+
           {Object.values(more).some(state => state.hasMore) && (
             <div className="search-more">
-              <button type="button" className="btn btn-outline" disabled={moreLoading} onClick={loadMore}>
+              <button type="button" className="btn btn-outline btn-sm" disabled={moreLoading} onClick={loadMore}>
                 {t(moreLoading ? '加载中…' : '加载更多')}
               </button>
               {moreError && <span role="alert">{t(moreError)}</span>}
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

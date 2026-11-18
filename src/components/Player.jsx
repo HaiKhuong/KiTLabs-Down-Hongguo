@@ -16,7 +16,7 @@ import NasDownload from './NasDownload';
 import CastPanel from './CastPanel';
 import VideoEnhancement, { useVideoEnhancement } from './VideoEnhancement';
 import './Player.css';
-import { Play, Film, Download, Check, RefreshCw, Layers, X, Trash2, ChevronDown, Zap } from './icons';
+import { Play, Film, Download, Check, RefreshCw, Layers, X, Trash2, ChevronDown, Zap, Search, Settings, Maximize2, Minimize2, Keyboard, Folder } from './icons';
 
 const localMediaKey = (seriesId, episode) => JSON.stringify([seriesId, episode?.vid, episode?.vid_index, episode?.fileUrl, episode?.fileSize, episode?.taskId]);
 // 预取失败后短暂退避，避免 timeupdate 4Hz 反复撞同一个坏节点。
@@ -62,6 +62,14 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
   const [showDanmakuControls, setShowDanmakuControls] = useState(false);
   useEffect(() => subscribeShortcuts(setShortcuts), []);
   const [playbackSettingSaving, setPlaybackSettingSaving] = useState(false);
+  const [cinemaMode, setCinemaMode] = useState(false);
+  const [cinemaEpisodesOpen, setCinemaEpisodesOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [epSearch, setEpSearch] = useState('');
+  const [downloadedOnly, setDownloadedOnly] = useState(false);
+  const [bottomTab, setBottomTab] = useState('downloads'); // 'downloads' | 'community'
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const playbackSettingPending = useRef(false);
   const playbackSettingRevision = useRef(0);
   const [windowFill, setWindowFill] = useState(false);
@@ -1737,6 +1745,15 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
   }, [active, portrait, episodesOpen, loading, showToast]);
   useEffect(() => () => { window.electronAPI.setEpisodePanelOpen?.(false).catch(() => {}); }, []);
 
+  const filteredEpisodes = useMemo(() => {
+    const q = epSearch.trim();
+    return episodes.filter((ep) => {
+      if (downloadedOnly && ep.status !== 'completed') return false;
+      if (q && !String(ep.vid_index).includes(q) && !(ep.title || '').includes(q)) return false;
+      return true;
+    });
+  }, [episodes, epSearch, downloadedOnly]);
+
   // ===== 渲染 =====
   if (loading) {
     return <div className="player-container"><div className="player-empty">{t("加载中…")}</div></div>;
@@ -1781,104 +1798,83 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
   }
 
   return (
-    <div className={`player-container ${episodesOpen ? '' : 'episodes-collapsed'}`}>
-      {/* 剧集选择：当前剧 + 下拉管理面板（替代原来会越堆越长的横条） */}
-      <div className="player-series-row" hidden={actionsHidden}>
-        <div className="player-series-current">
-          <span className="player-series-name" title={detail ? detail.series_title : ''}>
+    <div className={`player-container ${episodesOpen ? '' : 'episodes-collapsed'} ${cinemaMode ? 'cinema-mode' : ''}`}>
+      {/* 5. Compact Page Header */}
+      <div className="player-top-header" hidden={actionsHidden}>
+        <div className="player-top-left">
+          <h2 className="player-series-name" title={detail ? detail.series_title : ''}>
             {detail ? detail.series_title : '—'}
-          </span>
-          <span className="player-stat">{t(mobile ? `第 ${currentIndex} 集 · 共 ${episodes.length || 0} 集` : `已下载 ${playableCount} / ${episodes.length || 0} 集`)}</span>
+          </h2>
+          <div className="player-top-meta">
+            <span>{t("第 {0} 集 / 共 {1} 集", [currentIndex, episodes.length || 0])}</span>
+            <span className="player-meta-dot">·</span>
+            <span>{t("已下载 {0} / {1} 集", [playableCount, episodes.length || 0])}</span>
+          </div>
         </div>
-      </div>
-
-      <div className="player-online-quality-row" hidden={actionsHidden}>
-          <label className="player-download-quality">
-            <span>{t("在线播放清晰度")}</span>
-            <select className="input-field" aria-label={t("在线播放清晰度")} value={onlineQuality}
-              disabled={!supportsOnlineQuality} title={t("自动优先1080P；老电脑优先H.264片源，必要时提前转码；手动指定画质保持固定。")}
-              onChange={event => changeOnlineQuality(event.target.value)}>
-              <option value="auto">{t(supportsOnlineQuality ? '自动（1080P优先）' : '由片源决定')}</option>
-              <option value="compat">{t(mobile ? '兼容片源（H.264优先）' : '老电脑（H.264优先）')}</option>
-              <option value="720p">720P</option>
-              <option value="1080p">1080P</option>
-            </select>
-          </label>
-          <label className="player-download-quality player-decoder-control">
-            <span>{t("解码方式")}</span>
-            <select className="input-field" aria-label={t("解码方式")} value={fastConversion ? 'hardware' : softwareDecode ? 'software' : 'auto'}
-              aria-describedby={!mobile ? 'player-decoder-help' : undefined} disabled={qualityLoading || playbackSettingSaving}
-              title={t("软件解码使用CPU直接播放H.264/H.265，无需等待整集转码；流畅度取决于CPU性能。")}
-              onChange={event => changeDecoder(event.target.value)}>
-              <option value="auto">{t("自动（系统解码）")}</option>
-              <option value="software">{t("软件解码（CPU）")}</option>
-              {!mobile && <option value="hardware">{t("高性能显卡快速解码（老电脑请勿使用）")}</option>}
-            </select>
-          </label>
-          {!mobile && <p id="player-decoder-help" className="player-download-quality-hint">{t("优先使用显卡加速格式转换，ByteVC2仍由CPU解码；不支持时提示并回退。")}</p>}
-      </div>
-
-      <div className="player-header" hidden={actionsHidden}>
-        <div className="player-header-right">
-          {!mobile && <button className="btn btn-outline" disabled={current?.status !== 'completed'}
-            title={t("用系统为 MP4 设置的默认播放器打开已下载本集；可在系统中设为 VLC、IINA 等播放器")}
-            onClick={async () => {
-              videoRef.current?.pause();
-              try {
-                const result = await window.electronAPI.openEpisodeExternal(activeSeriesId, currentIndex);
-                if (!result?.success) showToast(result?.error || '无法打开系统播放器');
-              } catch { showToast('无法打开系统播放器，请稍后重试'); }
-            }}>{t("系统播放器")}</button>}
-          <button aria-pressed={cacheNext} className={`btn btn-outline ${cacheNext ? 'btn-autonext-on' : ''}`}
-            disabled={qualityLoading || playbackSettingSaving}
-            onClick={() => savePlaybackSetting('cache_next_episode', !cacheNext, setCacheNext)}
-            style={{ whiteSpace: 'nowrap' }}
-            title={t("开始播放后最多预缓存后续两集，减少连续切集等待；会使用网络流量")}>
-            <Download size={15} />{t("缓存后续 2 集 ")}{t(cacheNext ? '开' : '关')}
+        <div className="player-top-actions">
+          <button
+            type="button"
+            aria-expanded={pickerOpen}
+            className={`btn btn-outline btn-sm series-picker-btn ${pickerOpen ? 'open' : ''}`}
+            onClick={() => setPickerOpen((v) => !v)}
+          >
+            <span>{t("切换剧集")}</span>
+            <span className="series-count">{seriesList.length}</span>
+            <ChevronDown size={14} />
+          </button>
+          {cinemaMode && (
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setCinemaEpisodesOpen(v => !v)}>
+              <Layers size={14} /><span>{t("选集")}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={`btn btn-outline btn-sm ${cinemaMode ? 'is-active' : ''}`}
+            aria-pressed={cinemaMode}
+            onClick={() => { setCinemaMode(v => !v); setCinemaEpisodesOpen(false); }}
+            title={cinemaMode ? t("退出") : "Cinema Mode"}
+          >
+            {cinemaMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            <span>{cinemaMode ? t("退出") : t("全屏")}</span>
           </button>
           <button
-            aria-pressed={autoNext}
-            className={`btn btn-outline ${autoNext ? 'btn-autonext-on' : ''}`}
-            onClick={() => setAutoNext(!autoNext)}
-            title={t(`播完自动播放下一集（${formatShortcut(shortcuts.autoNext, t)}）`)}
+            type="button"
+            className={`toolbar-icon-btn ${shortcutsOpen ? 'is-active' : ''}`}
+            title={t("播放快捷键")}
+            aria-label={t("播放快捷键")}
+            onClick={() => setShortcutsOpen(v => !v)}
           >
-            <Layers size={15} />{t("连播 ")}{t(autoNext ? '开' : '关')}
+            <Keyboard size={15} />
           </button>
-          {!mobile && <button aria-pressed={autoCompat} className={`btn btn-outline ${autoCompat ? 'btn-autonext-on' : ''}`}
-            disabled={qualityLoading || playbackSettingSaving}
-            onClick={() => savePlaybackSetting('compat_mode', !autoCompat, setAutoCompat)}
-            title={t("无法解码时自动转码为 H.264 播放")}>
-            <Zap size={15} />{t("兼容模式 ")}{t(autoCompat ? '开' : '关')}
-          </button>}
-          <button aria-pressed={autoDelete} className={`btn btn-outline ${autoDelete ? 'btn-autonext-on' : ''}`}
-            disabled={qualityLoading || playbackSettingSaving}
-            title={t("看完一集后删除该集的下载文件与播放缓存；开启前需确认")}
-            onClick={() => autoDelete ? savePlaybackSetting('auto_delete_watched', false, setAutoDelete) : setConfirmAsk({
-              title: '开启看完自动删除',
-              message: '看完一集后，将永久删除该集已下载的视频、在线播放缓存和转码缓存。需要时可重新下载。',
-              okText: '开启自动删除', danger: true,
-              onOk: () => savePlaybackSetting('auto_delete_watched', true, setAutoDelete),
-            })}>
-            <Trash2 size={15} />{t("看完自动删 ")}{t(autoDelete ? '开' : '关')}
+          <button
+            type="button"
+            className={`toolbar-icon-btn ${settingsOpen ? 'is-active' : ''}`}
+            title={t("播放设置")}
+            aria-label={t("播放设置")}
+            onClick={() => setSettingsOpen(v => !v)}
+          >
+            <Settings size={15} />
           </button>
-        <div className="player-series-actions">
-        <button
-          aria-expanded={pickerOpen}
-          className={`btn btn-outline series-picker-btn ${pickerOpen ? 'open' : ''}`}
-          onClick={() => setPickerOpen((v) => !v)}
-        >{t("切换剧集")}<span className="series-count">{t(seriesList.length)}</span>
-          <ChevronDown size={15} />
-        </button>
-          <button className="btn btn-outline player-download-jump" aria-controls="player-management"
-            onClick={() => {
-              if (portrait) setEpisodesOpen(true);
-              requestAnimationFrame(() => downloadToolsRef.current?.scrollIntoView({
-                behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth', block: 'center',
-              }));
-            }}><Download size={15} />{t("下载管理")}</button>
-        </div>
         </div>
       </div>
+
+      {/* Keyboard Shortcuts Modal / Popover */}
+      {shortcutsOpen && (
+        <div className="player-popover-card" role="dialog" aria-label={t("播放快捷键")}>
+          <div className="player-popover-head">
+            <span>{t("播放快捷键")}</span>
+            <button type="button" className="icon-btn" onClick={() => setShortcutsOpen(false)} aria-label={t("关闭")}><X size={15} /></button>
+          </div>
+          <div className="player-shortcuts-grid">
+            {SHORTCUT_ACTIONS.map((action) => (
+              <div className="player-shortcut-item" key={action.id}>
+                <kbd>{formatShortcut(shortcuts[action.id], t)}</kbd>
+                <span>{t(action.label)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {pickerOpen && !actionsHidden && (
         <div className="series-picker">
@@ -2010,7 +2006,8 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
         </div>
       )}
 
-      <div className="player-viewing-layout">
+      <div className={`player-viewing-layout ${cinemaMode && cinemaEpisodesOpen ? 'cinema-episodes-open' : ''}`}>
+      <div className="player-stage-column">
       {/* 播放区 */}
       <div className="player-floating-slot" ref={floatingPlayer.attachSlot}>
         {floatingPlayer.floating && <div className="player-floating-placeholder" role="status">
@@ -2259,115 +2256,237 @@ function Player({ target, onNavigate, onSeriesSelected, onFloatingChange, active
         )}
       </div>, floatingPlayer.host))}
 
-      {mobile && episodesOpen && <button className="mobile-episode-scrim" aria-label={t("关闭选集")} onClick={() => setEpisodesOpen(false)} />}
-      <section className="player-episode-panel" id="player-episode-panel" aria-label={t("选集")} role={mobile && episodesOpen ? 'dialog' : undefined} aria-modal={mobile && episodesOpen ? true : undefined}>
-      {mobile ? <div className="mobile-episode-head"><h3>{t("选集")}</h3><button className="btn btn-outline btn-sm" onClick={() => setEpisodesOpen(false)}>{t("关闭")}</button></div> : <h3 className="portrait-episode-heading">{t("选集")}</h3>}
-      {/* 播放中的集信息 */}
-      {current && (
-        <div className="player-now">
-          <span className="player-now-title">
-            {t("《{0}》第 {1} 集", [detail?.series_title || '', current.vid_index])}</span>
-          {current.title && <span className="player-now-sub">{current.title}</span>}
-          <span className={`player-now-status status-${current.status}`}>
-            {t(current.locked ? '锁定' : current.status === 'completed' ? '可播放' : current.status === 'downloading' ? `下载中 ${current.progress || 0}%` : current.status === 'pending' ? '排队中' : '未下载')}
-          </span>
-        </div>
-      )}
-
-      {detail?.web_accessible_episodes != null && detail.web_accessible_episodes < detail.total && (
-        <p className="player-tips">{t("网页标记前 {0} 集可访问；仅有预览或无完整片源时，自动尝试 App 片源。", [detail.web_accessible_episodes])}</p>
-      )}
-
-      {episodes.some((ep) => ep.locked) && <p className="player-tips">{t("锁定集需在来源平台解锁，本应用不提供解锁；连播会跳过锁定集。")}</p>}
-
-      {/* 分集列表 */}
-      <div className="player-episodes">
-        {episodes.map((ep) => {
-          const isCurrent = ep.vid_index === currentIndex;
-          return (
-            <button
-              key={ep.vid_index}
-              disabled={ep.locked === true}
-              aria-label={t(`第 ${ep.vid_index} 集`)}
-              aria-pressed={isCurrent}
-              className={`ep-chip ep-${ep.status} ${isCurrent ? 'ep-current' : ''}`}
-              onClick={() => { goToEpisode(ep.vid_index); if (mobile) setEpisodesOpen(false); }}
-              title={
-                t(ep.locked ? '需在来源平台解锁' : ep.status === 'completed'
-                  ? '点击播放（本地）'
-                  : ep.status === 'downloading' || ep.status === 'pending'
-                  ? '下载继续，点击在线播放'
-                  : '点击在线播放（不下载）· 双击加入下载')
-              }
-              onDoubleClick={() => !mobile && ep.status !== 'completed' && downloadEpisode(ep.vid_index)}
-            >
-              <span className="ep-num">{t(ep.vid_index)}</span>{ep.locked && <span className="ep-lock-label">{t("锁定")}</span>}
-              {ep.status === 'completed' && <Check size={11} className="ep-badge" />}
-              {ep.status === 'downloading' && (
-                <span className="ep-progress" style={{ width: `${ep.progress || 0}%` }} />
-              )}
-              {onlineVid === ep.vid && <span className="ep-online-dot" />}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="player-tips">{t("快捷键：")}{SHORTCUT_ACTIONS.map(action => `${formatShortcut(shortcuts[action.id], t)} ${t(action.label)}`).join(' · ')}{t("。可在设置中更改。")}<br />
-        <b>{t("未锁定的灰色分集点一下即可在线播放")}</b>{t("（不保存到下载目录）；双击才加入下载队列。 连播时遇到未下载的集会自动转在线播放。")}</div>
-
-      <div className="player-management" id="player-management" ref={downloadToolsRef} hidden={actionsHidden}>
-        <h3 id="player-download-heading">{t("下载清晰度")}</h3>
-        <div className="player-management-actions">
-            <select className="input-field" aria-labelledby="player-download-heading" value={downloadQuality} disabled={qualityLoading}
-              title={t("手动下载及自动画质的下载回退使用此项。红果片源所选清晰度不可用或下载失败时，自动尝试更低清晰度，并在下载管理中提示；已有文件保留。")}
+      {/* 8. Compact Player Settings Toolbar */}
+      <div className={`player-settings-bar ${settingsOpen ? 'is-expanded' : ''}`} hidden={actionsHidden || cinemaMode}>
+        <div className="player-settings-selects">
+          <label className="player-setting-select">
+            <span>{t("清晰度")}</span>
+            <select aria-label={t("在线播放清晰度")} value={onlineQuality}
+              disabled={!supportsOnlineQuality} title={t("自动优先1080P；老电脑优先H.264片源，必要时提前转码；手动指定画质保持固定。")}
+              onChange={event => changeOnlineQuality(event.target.value)}>
+              <option value="auto">{t(supportsOnlineQuality ? '自动（1080P优先）' : '由片源决定')}</option>
+              <option value="compat">{t(mobile ? '兼容片源（H.264优先）' : '老电脑（H.264优先）')}</option>
+              <option value="720p">720P</option>
+              <option value="1080p">1080P</option>
+            </select>
+          </label>
+          <label className="player-setting-select">
+            <span>{t("解码方式")}</span>
+            <select aria-label={t("解码方式")} value={fastConversion ? 'hardware' : softwareDecode ? 'software' : 'auto'}
+              disabled={qualityLoading || playbackSettingSaving}
+              title={t("优先使用显卡加速格式转换，ByteVC2仍由CPU解码；不支持时提示并回退。")}
+              onChange={event => changeDecoder(event.target.value)}>
+              <option value="auto">{t("自动（系统解码）")}</option>
+              <option value="software">{t("软件解码（CPU）")}</option>
+              {!mobile && <option value="hardware">{t("高性能显卡快速解码（老电脑请勿使用）")}</option>}
+            </select>
+          </label>
+          <label className="player-setting-select player-download-quality-select">
+            <span>{t("下载清晰度")}</span>
+            <select aria-label={t("下载清晰度")} value={downloadQuality} disabled={qualityLoading}
               onChange={(event) => setDownloadQuality(event.target.value)}>
               <option value="auto">{t("自动（兼容优先）")}</option>
               <option value="1080p">1080P</option>
               <option value="720p">720P</option>
             </select>
-          <button className="btn btn-outline" onClick={() => downloadMissing()} disabled={qualityLoading}>
-            <Download size={15} />{t("下载未完成集")}</button>
-          <button
-            className="btn btn-primary"
-            onClick={openMergeDialog}
-            disabled={merging || playableCount === 0}
-            title={t("把已下载的分集合并成单个 mp4，方便一次性看完")}
-          >
-            <Layers size={15} />
-            {t(merging ? '提交中...' : '合并导出全集')}
+          </label>
+        </div>
+        <div className="player-settings-toggles">
+          <button type="button" aria-pressed={autoNext} className={`player-toggle-pill ${autoNext ? 'is-on' : ''}`}
+            onClick={() => setAutoNext(!autoNext)} title={t(`播完自动播放下一集（${formatShortcut(shortcuts.autoNext, t)}）`)}>
+            <Layers size={13} /><span>{t("连播")}</span>
           </button>
-          <button className="btn btn-outline" onClick={() => downloadEpisode(current.vid_index)}
+          <button type="button" aria-pressed={cacheNext} className={`player-toggle-pill ${cacheNext ? 'is-on' : ''}`}
+            disabled={qualityLoading || playbackSettingSaving}
+            onClick={() => savePlaybackSetting('cache_next_episode', !cacheNext, setCacheNext)}
+            title={t("开始播放后最多预缓存后续两集，减少连续切集等待；会使用网络流量")}>
+            <Download size={13} /><span>{t("缓存后续 2 集")}</span>
+          </button>
+          {!mobile && (
+            <button type="button" aria-pressed={autoCompat} className={`player-toggle-pill ${autoCompat ? 'is-on' : ''}`}
+              disabled={qualityLoading || playbackSettingSaving}
+              onClick={() => savePlaybackSetting('compat_mode', !autoCompat, setAutoCompat)}
+              title={t("无法解码时自动转码为 H.264 播放")}>
+              <Zap size={13} /><span>{t("兼容模式")}</span>
+            </button>
+          )}
+          <button type="button" aria-pressed={autoDelete} className={`player-toggle-pill ${autoDelete ? 'is-on is-danger' : ''}`}
+            disabled={qualityLoading || playbackSettingSaving}
+            title={t("看完一集后删除该集的下载文件与播放缓存；开启前需确认")}
+            onClick={() => autoDelete ? savePlaybackSetting('auto_delete_watched', false, setAutoDelete) : setConfirmAsk({
+              title: '开启看完自动删除',
+              message: '看完一集后，将永久删除该集已下载的视频、在线播放缓存和转码缓存。需要时可重新下载。',
+              okText: '开启自动删除', danger: true,
+              onOk: () => savePlaybackSetting('auto_delete_watched', true, setAutoDelete),
+            })}>
+            <Trash2 size={13} /><span>{t("看完自动删")}</span>
+          </button>
+          {!mobile && (
+            <button type="button" className="player-toggle-pill" disabled={current?.status !== 'completed'}
+              title={t("用系统为 MP4 设置的默认播放器打开已下载本集；可在系统中设为 VLC、IINA 等播放器")}
+              onClick={async () => {
+                videoRef.current?.pause();
+                try {
+                  const result = await window.electronAPI.openEpisodeExternal(activeSeriesId, currentIndex);
+                  if (!result?.success) showToast(result?.error || '无法打开系统播放器');
+                } catch { showToast('无法打开系统播放器，请稍后重试'); }
+              }}>
+              <Play size={13} /><span>{t("系统播放器")}</span>
+            </button>
+          )}
+          <button type="button" className="btn btn-primary btn-sm player-quick-dl-btn"
+            onClick={() => current && downloadEpisode(current.vid_index)}
             disabled={qualityLoading || !current || current.locked || current.status === 'completed'}>
-            <Download size={15} />{t("下载本集")}</button>
-          {[5, 10].map(count => (
-            <button key={count} className="btn btn-outline" onClick={() => downloadMissing(count)}
-              disabled={qualityLoading || !current || !episodes.some(ep => ep.vid_index > current.vid_index)}
-              title={t(`从当前集的下一集开始，最多下载 ${count} 集；跳过已完成和锁定集数`)}>
-              <Download size={15} />{t("下载后")}{t(count)}{t("集")}</button>
-          ))}
-          <button className="btn btn-outline" onClick={downloadFollowing}
-            disabled={qualityLoading || !current || followingDownload}
-            title={t("包含当前集，下载至末集；跳过已完成、已排队和锁定集数")}>
-            <Download size={15} />{t(followingDownload ? '提交中…' : '从本集下载至末集')}
+            <Download size={13} /><span>{t("下载本集")}</span>
           </button>
         </div>
       </div>
+      </div>
 
+      {/* 7. Episode Navigation Panel (Right column 300px) */}
+      {(mobile && episodesOpen || cinemaMode && cinemaEpisodesOpen) && (
+        <button className="mobile-episode-scrim" aria-label={t("关闭选集")} onClick={() => { setEpisodesOpen(false); setCinemaEpisodesOpen(false); }} />
+      )}
+      <section className={`player-episode-panel ${cinemaMode && cinemaEpisodesOpen ? 'is-cinema-drawer' : ''}`} id="player-episode-panel" aria-label={t("选集")} role={mobile && episodesOpen ? 'dialog' : undefined} aria-modal={mobile && episodesOpen ? true : undefined}>
+        <div className="ep-panel-header">
+          <div className="ep-panel-title">
+            <h3>{t("选集")} <span className="ep-panel-count">({episodes.length})</span></h3>
+            {current && <span className="ep-panel-current-pill">{t("第 {0} 集", [current.vid_index])}</span>}
+          </div>
+          {(mobile || cinemaMode) && (
+            <button type="button" className="icon-btn" aria-label={t("关闭")} onClick={() => { setEpisodesOpen(false); setCinemaEpisodesOpen(false); }}>
+              <X size={15} />
+            </button>
+          )}
+        </div>
+
+        <div className="ep-panel-controls">
+          <div className="ep-search-wrap">
+            <Search size={13} />
+            <input
+              type="text"
+              value={epSearch}
+              onChange={(e) => setEpSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const n = Number(epSearch.trim());
+                  if (Number.isInteger(n) && episodes.some(ep => ep.vid_index === n && !ep.locked)) {
+                    goToEpisode(n);
+                  }
+                }
+              }}
+              placeholder={t("集数")}
+              aria-label={t("选择集数范围")}
+            />
+            {epSearch && (
+              <button type="button" className="icon-btn" onClick={() => setEpSearch('')} aria-label={t("清空")}><X size={12} /></button>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`ep-filter-btn ${downloadedOnly ? 'is-on' : ''}`}
+            aria-pressed={downloadedOnly}
+            onClick={() => setDownloadedOnly(v => !v)}
+            title={t("已下载")}
+          >
+            <Check size={12} /><span>{playableCount}</span>
+          </button>
+        </div>
+
+        {detail?.web_accessible_episodes != null && detail.web_accessible_episodes < detail.total && (
+          <p className="player-tips">{t("网页标记前 {0} 集可访问；仅有预览或无完整片源时，自动尝试 App 片源。", [detail.web_accessible_episodes])}</p>
+        )}
+
+        {/* 5-Column Episode Grid */}
+        <div className="player-episodes">
+          {filteredEpisodes.map((ep) => {
+            const isCurrent = ep.vid_index === currentIndex;
+            return (
+              <button
+                key={ep.vid_index}
+                disabled={ep.locked === true}
+                aria-label={t(`第 ${ep.vid_index} 集`)}
+                aria-pressed={isCurrent}
+                className={`ep-chip ep-${ep.status} ${isCurrent ? 'ep-current' : ''}`}
+                onClick={() => { goToEpisode(ep.vid_index); if (mobile) setEpisodesOpen(false); }}
+                title={
+                  t(ep.locked ? '需在来源平台解锁' : ep.status === 'completed'
+                    ? '点击播放（本地）'
+                    : ep.status === 'downloading' || ep.status === 'pending'
+                    ? '下载继续，点击在线播放'
+                    : '点击在线播放（不下载）· 双击加入下载')
+                }
+                onDoubleClick={() => !mobile && ep.status !== 'completed' && downloadEpisode(ep.vid_index)}
+              >
+                {isCurrent && <Play size={9} className="ep-play-dot" />}
+                <span className="ep-num">{t(ep.vid_index)}</span>
+                {ep.status === 'completed' && !isCurrent && <span className="ep-dl-dot" />}
+                {ep.status === 'downloading' && <span className="ep-progress" style={{ width: `${ep.progress || 0}%` }} />}
+                {onlineVid === ep.vid && !isCurrent && <span className="ep-online-dot" />}
+              </button>
+            );
+          })}
+        </div>
       </section>
       </div>
 
-      <div className="player-footer" hidden={actionsHidden}>
-        <CastPanel seriesId={activeSeriesId} episode={current} title={detail?.series_title} videoRef={videoRef} />
-        {/^[0-9]{6,30}$/.test(String(activeSeriesId)) ? (
-          <CommunityPanel seriesId={activeSeriesId} episodeId={current?.vid} title={detail?.series_title || ''} cover={detail?.cover || ''}
-            trailingAction={<NasDownload seriesId={activeSeriesId} quality={downloadQuality} disabled={qualityLoading} />}>
-            <SequelFinder seriesId={activeSeriesId} active={active && !actionsHidden} />
-          </CommunityPanel>
-        ) : <div className="player-footer-tools">
-          <SequelFinder seriesId={activeSeriesId} active={active && !actionsHidden} />
-          <NasDownload seriesId={activeSeriesId} quality={downloadQuality} disabled={qualityLoading} />
-        </div>}
-      </div>
+      {/* 9-11. Standalone Sections below the player */}
+      {!cinemaMode && (
+        <div className="player-bottom-sections" hidden={actionsHidden}>
+          <section className="player-section-card player-management" id="player-management" ref={downloadToolsRef}>
+            <div className="player-section-head">
+              <h3>{t("下载管理")} & {t("下载到 NAS")} / {t("投屏")}</h3>
+            </div>
+            <div className="player-dl-bar">
+              <button className="btn btn-outline btn-sm" onClick={() => downloadMissing()} disabled={qualityLoading}>
+                <Download size={14} /><span>{t("下载未完成集")}</span>
+              </button>
+              <div className="player-dl-split-btn">
+                <button type="button" className="btn btn-outline btn-sm" aria-expanded={downloadMenuOpen}
+                  onClick={() => setDownloadMenuOpen(v => !v)}>
+                  <span>{t("更多操作")}</span><ChevronDown size={13} />
+                </button>
+                {downloadMenuOpen && (
+                  <div className="player-dl-dropdown" role="menu">
+                    {[5, 10].map(count => (
+                      <button key={count} type="button" onClick={() => { setDownloadMenuOpen(false); downloadMissing(count); }}
+                        disabled={qualityLoading || !current || !episodes.some(ep => ep.vid_index > current.vid_index)}>
+                        <Download size={13} /><span>{t("下载后")}{count}{t("集")}</span>
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => { setDownloadMenuOpen(false); downloadFollowing(); }}
+                      disabled={qualityLoading || !current || followingDownload}>
+                      <Download size={13} /><span>{t(followingDownload ? '提交中…' : '从本集下载至末集')}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button className="btn btn-outline btn-sm" onClick={openMergeDialog} disabled={merging || playableCount === 0}>
+                <Layers size={14} /><span>{t(merging ? '提交中...' : '合并导出全集')}</span>
+              </button>
+              {onNavigate && (
+                <button className="btn btn-outline btn-sm" onClick={() => onNavigate('manager')}>
+                  <Folder size={14} /><span>{t("查看下载管理")}</span>
+                </button>
+              )}
+              <CastPanel seriesId={activeSeriesId} episode={current} title={detail?.series_title} videoRef={videoRef} />
+            </div>
+            <div className="player-nas-row">
+              <NasDownload seriesId={activeSeriesId} quality={downloadQuality} disabled={qualityLoading} />
+            </div>
+          </section>
+
+          <section className="player-section-card player-community-card">
+            {/^[0-9]{6,30}$/.test(String(activeSeriesId)) ? (
+              <CommunityPanel seriesId={activeSeriesId} episodeId={current?.vid} title={detail?.series_title || ''} cover={detail?.cover || ''}>
+                <SequelFinder seriesId={activeSeriesId} active={active && !actionsHidden} />
+              </CommunityPanel>
+            ) : (
+              <SequelFinder seriesId={activeSeriesId} active={active && !actionsHidden} />
+            )}
+          </section>
+        </div>
+      )}
       {toast && <div className="dm-toast dm-toast-success" onClick={() => setToast(null)}>{t(toast)}</div>}
 
       {/* 合并格式选择 */}

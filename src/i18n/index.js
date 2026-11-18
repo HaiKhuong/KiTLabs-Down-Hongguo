@@ -2,6 +2,8 @@ import { createTranslator, formatMessage } from './translator.mjs';
 import { useSyncExternalStore } from 'react';
 import english from './en.json';
 import templates from './templates.json';
+import vietnamese from './vi.json';
+import viTemplates from './vi-templates.json';
 import { resolveLanguage, readPreference, savePreference, LANGUAGE_KEY } from './language.mjs';
 
 let locale = typeof navigator === 'undefined' ? '' : navigator.language;
@@ -11,14 +13,19 @@ try { preference = readPreference(storage()); } catch { preference = 'system'; }
 let language = resolveLanguage(preference, locale);
 const listeners = new Set();
 const translateEnglish = createTranslator(english, templates);
+const translateVietnamese = createTranslator(vietnamese, viTemplates);
 
-export function t(value, values) { return language === 'en' ? translateEnglish(value, values) : formatMessage(value, values); }
+export function t(value, values) {
+  if (language === 'en') return translateEnglish(value, values);
+  if (language === 'vi') return translateVietnamese(value, values);
+  return formatMessage(value, values);
+}
 export function getLanguagePreference() { return preference; }
 export function getLanguage() { return language; }
 function refresh() {
   language = resolveLanguage(preference, locale);
   document.documentElement.lang = language;
-  document.title = language === 'en' ? 'Hongguo Drama' : '红果短剧';
+  document.title = language === 'en' ? 'Hongguo Drama' : language === 'vi' ? 'Phim Ngắn Hongguo' : '红果短剧';
   for (const listener of listeners) listener();
   try {
     Promise.resolve(window.electronAPI?.setInterfaceLanguage?.(language)).catch(() => {});

@@ -5709,45 +5709,45 @@ ipcMain.handle('get-episode-danmaku', async (_event, options) => {
 });
 
 function applyInterfaceLanguage(language) {
-  const label = (zh, en) => language === 'en' ? en : zh;
-  const appName = label(APP_TITLE, IS_PREVIEW ? 'Hongguo Drama Preview' : 'Hongguo Drama');
+  const label = (zh, en, vi) => language === 'en' ? en : language === 'vi' ? (vi ?? en) : zh;
+  const appName = label(APP_TITLE, IS_PREVIEW ? 'KiTLabs Downloader Preview' : 'KiTLabs Downloader', IS_PREVIEW ? 'KiTLabs Downloader (Xem trước)' : 'KiTLabs Downloader');
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle?.(appName);
   if (process.platform !== 'darwin') return;
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: appName, submenu: [
-      { role: 'about', label: label(`关于${APP_TITLE}`, `About ${appName}`) },
+      { role: 'about', label: label(`关于${APP_TITLE}`, `About ${appName}`, `Giới thiệu ${appName}`) },
       { type: 'separator' },
-      { role: 'services', label: label('服务', 'Services') },
+      { role: 'services', label: label('服务', 'Services', 'Dịch vụ') },
       { type: 'separator' },
-      { role: 'hide', label: label('隐藏', 'Hide') },
-      { role: 'hideOthers', label: label('隐藏其他应用', 'Hide Others') },
-      { role: 'unhide', label: label('显示全部', 'Show All') },
+      { role: 'hide', label: label('隐藏', 'Hide', 'Ẩn') },
+      { role: 'hideOthers', label: label('隐藏其他应用', 'Hide Others', 'Ẩn ứng dụng khác') },
+      { role: 'unhide', label: label('显示全部', 'Show All', 'Hiện tất cả') },
       { type: 'separator' },
-      { role: 'quit', label: label('退出', 'Quit') },
+      { role: 'quit', label: label('退出', 'Quit', 'Thoát') },
     ] },
-    { label: label('编辑', 'Edit'), submenu: [
-      { role: 'undo', label: label('撤销', 'Undo') }, { role: 'redo', label: label('重做', 'Redo') },
+    { label: label('编辑', 'Edit', 'Chỉnh sửa'), submenu: [
+      { role: 'undo', label: label('撤销', 'Undo', 'Hoàn tác') }, { role: 'redo', label: label('重做', 'Redo', 'Làm lại') },
       { type: 'separator' },
-      { role: 'cut', label: label('剪切', 'Cut') }, { role: 'copy', label: label('复制', 'Copy') },
-      { role: 'paste', label: label('粘贴', 'Paste') }, { role: 'selectAll', label: label('全选', 'Select All') },
+      { role: 'cut', label: label('剪切', 'Cut', 'Cắt') }, { role: 'copy', label: label('复制', 'Copy', 'Sao chép') },
+      { role: 'paste', label: label('粘贴', 'Paste', 'Dán') }, { role: 'selectAll', label: label('全选', 'Select All', 'Chọn tất cả') },
     ] },
-    { label: label('视图', 'View'), submenu: [
-      { label: label('实际大小', 'Actual Size'), accelerator: 'CmdOrCtrl+0', click: () => changeMainWindowZoom('reset') },
-      { label: label('放大', 'Zoom In'), accelerator: 'CmdOrCtrl+Plus', click: () => changeMainWindowZoom('in') },
-      { label: label('缩小', 'Zoom Out'), accelerator: 'CmdOrCtrl+-', click: () => changeMainWindowZoom('out') },
-      { type: 'separator' }, { role: 'togglefullscreen', label: label('全屏', 'Full Screen') },
+    { label: label('视图', 'View', 'Hiển thị'), submenu: [
+      { label: label('实际大小', 'Actual Size', 'Kích thước thực'), accelerator: 'CmdOrCtrl+0', click: () => changeMainWindowZoom('reset') },
+      { label: label('放大', 'Zoom In', 'Phóng to'), accelerator: 'CmdOrCtrl+Plus', click: () => changeMainWindowZoom('in') },
+      { label: label('缩小', 'Zoom Out', 'Thu nhỏ'), accelerator: 'CmdOrCtrl+-', click: () => changeMainWindowZoom('out') },
+      { type: 'separator' }, { role: 'togglefullscreen', label: label('全屏', 'Full Screen', 'Toàn màn hình') },
     ] },
-    { label: label('窗口', 'Window'), submenu: [
-      { role: 'minimize', label: label('最小化', 'Minimize') }, { role: 'close', label: label('关闭窗口', 'Close Window') },
+    { label: label('窗口', 'Window', 'Cửa sổ'), submenu: [
+      { role: 'minimize', label: label('最小化', 'Minimize', 'Thu nhỏ') }, { role: 'close', label: label('关闭窗口', 'Close Window', 'Đóng cửa sổ') },
       { type: 'separator' },
-      { label: label('回到主窗口', 'Return to Main Window'), accelerator: 'CmdOrCtrl+1', click: () => app.emit('activate') },
-      { label: label('退出隐身小窗', 'Exit Mini Window'), click: () => { stealth.setEnabled(false); syncMainWindowScale(); } },
+      { label: label('回到主窗口', 'Return to Main Window', 'Quay về cửa sổ chính'), accelerator: 'CmdOrCtrl+1', click: () => app.emit('activate') },
+      { label: label('退出隐身小窗', 'Exit Mini Window', 'Thoát cửa sổ nhỏ'), click: () => { stealth.setEnabled(false); syncMainWindowScale(); } },
     ] },
   ]));
 }
 
 ipcMain.handle('set-interface-language', (_event, language) => {
-  if (!['zh-CN', 'en'].includes(language)) return { success: false, error: 'Unsupported interface language' };
+  if (!['zh-CN', 'en', 'vi'].includes(language)) return { success: false, error: 'Unsupported interface language' };
   applyInterfaceLanguage(language);
   return { success: true };
 });

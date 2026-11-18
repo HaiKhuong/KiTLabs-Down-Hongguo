@@ -1,16 +1,63 @@
 import { t, useLanguage } from '../i18n';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useDanmakuSource, writeDanmakuSource } from './danmakuSource.mjs';
 import useDialogKeyboard from './useDialogKeyboard';
 import './Settings.css';
 import AppearanceSettings from './AppearanceSettings';
 import ShortcutSettings from './ShortcutSettings';
 import StealthWakeRegion from './StealthWakeRegion.jsx';
+import { FULL_WAKE_REGION, validWakeRegion } from './stealthWakeRegion.mjs';
 import CustomSources from './CustomSources';
 import BuiltinSources from './BuiltinSources';
 import AnnouncementSettings from './AnnouncementSettings';
-import { Settings, Folder, Check, Globe, X, RefreshCw, AlertCircle } from './icons';
+import {
+  Settings, Folder, Check, Globe, X, RefreshCw, AlertCircle,
+  SlidersHorizontal, Play, Download, Keyboard, Bell, PictureInPicture, Info, Search, Copy
+} from './icons';
 
+const CATEGORY_STORAGE_KEY = 'hg_settings_category';
+
+const CATEGORIES = [
+  { id: 'general', label: '通用', desc: '语言、外观、界面缩放与海报尺寸。', icon: SlidersHorizontal },
+  { id: 'playback', label: '播放设置', desc: '缓存、兼容转码、弹幕评论与搜索偏好。', icon: Play },
+  { id: 'downloads', label: '下载', desc: '保存目录、命名模板、默认清晰度与并发数。', icon: Download },
+  { id: 'sources', label: '片源与代理', desc: '内置来源、自定义源与网络代理配置。', icon: Globe },
+  { id: 'shortcuts', label: '快捷键', desc: '播放器快捷键、长按倍速与老板键。', icon: Keyboard },
+  { id: 'notifications', label: '通知与公告', desc: '追剧更新提醒与官方公告接收偏好。', icon: Bell },
+  { id: 'mini-window', label: '小窗与画中画', desc: '画中画模式与小窗唤醒区域设置。', icon: PictureInPicture },
+  { id: 'about', label: '关于与更新', desc: '配置文件路径、版本信息与软件更新。', icon: Info },
+];
+
+const SEARCH_INDEX = [
+  { label: '界面语言', category: 'general', keywords: 'language 语言 english vietnamese' },
+  { label: '外观', category: 'general', keywords: 'appearance theme dark light system 主题' },
+  { label: '界面与字号', category: 'general', keywords: 'zoom scale text size 缩放 100%' },
+  { label: '海报大小', category: 'general', keywords: 'poster size cover 封面' },
+  { label: '缓存后续 2 集', category: 'playback', keywords: 'cache preload next episodes 预缓存' },
+  { label: '自动兼容模式', category: 'playback', keywords: 'compat transcode bytevc2 解码 转码' },
+  { label: '看完自动删除', category: 'playback', keywords: 'delete watched 自动删除' },
+  { label: '显示弹幕按钮', category: 'playback', keywords: 'comments danmaku controls 评论 弹幕' },
+  { label: '弹幕来源', category: 'playback', keywords: 'comment source danmaku 评论来源' },
+  { label: '优先使用红果 App 搜索', category: 'playback', keywords: 'search app preference 搜索' },
+  { label: '下载目录', category: 'downloads', keywords: 'download folder path 目录 文件夹' },
+  { label: '普通下载保存整剧资料', category: 'downloads', keywords: 'metadata nfo cover 剧集资料' },
+  { label: '文件命名规则', category: 'downloads', keywords: 'filename pattern template 命名 模板' },
+  { label: '默认下载清晰度', category: 'downloads', keywords: 'download quality 1080p 720p auto 清晰度' },
+  { label: '最大并发下载数', category: 'downloads', keywords: 'concurrent downloads 并发' },
+  { label: '内置来源', category: 'sources', keywords: 'builtin sources hongguo xifan hema reelshort dramabox' },
+  { label: '自定义播放源', category: 'sources', keywords: 'custom source apple cms api 自定义源' },
+  { label: '网络代理', category: 'sources', keywords: 'proxy network clash v2ray direct system 代理' },
+  { label: '播放快捷键', category: 'shortcuts', keywords: 'shortcut keybindings fullscreen 2x 快捷键' },
+  { label: '老板键', category: 'shortcuts', keywords: 'boss key global shortcut 老板键' },
+  { label: '自动检查新集', category: 'notifications', keywords: 'watch updates episodes 新集提醒' },
+  { label: '查找疑似新一季', category: 'notifications', keywords: 'sequels new season 新一季' },
+  { label: '发送系统通知', category: 'notifications', keywords: 'system notifications 系统通知' },
+  { label: '公告通知', category: 'notifications', keywords: 'announcements emergency normal 公告' },
+  { label: '画中画小窗', category: 'mini-window', keywords: 'picture in picture pip native custom 画中画' },
+  { label: '唤醒区域', category: 'mini-window', keywords: 'wake area stealth mini window 小窗 唤醒' },
+  { label: '配置文件位置', category: 'about', keywords: 'config path data dir portable 配置路径' },
+  { label: '自动检测更新', category: 'about', keywords: 'updates check version 更新 版本' },
+];
 
 const FORMAT_PRESETS = [
   { label: '剧名_第N集', value: '剧名 集数' },
@@ -23,7 +70,6 @@ const PROXY_MODES = [
   { value: 'direct', label: '强制直连', desc: '忽略一切代理，直接连接' },
 ];
 
-// 常见代理软件默认端口，方便一键填入
 const PORT_PRESETS = [
   { label: 'Clash / Mihomo', port: 7890 },
   { label: 'V2rayN', port: 10809 },
@@ -31,7 +77,6 @@ const PORT_PRESETS = [
   { label: 'Burp / 抓包', port: 8080 },
 ];
 
-/** 已保存设置 -> 当前生效的代理描述 */
 function describeProxy(settings) {
   if (!settings || settings.proxy_enabled !== true) {
     return { on: false, text: '未启用（所有请求直连）' };
@@ -49,13 +94,35 @@ function describeProxy(settings) {
   return { on: true, text: '接口/下载跟随启动环境，浏览器跟随系统' };
 }
 
+function previewFilename(pattern) {
+  const raw = (pattern || '剧名 集数').trim() || '剧名 集数';
+  return raw
+    .replace(/剧名/g, '示例短剧')
+    .replace(/集数/g, '001')
+    .replace(/标题/g, '初遇')
+    .replace(/\s+/g, '_') + '.mp4';
+}
+
+function readSavedCategory() {
+  try {
+    const saved = localStorage.getItem(CATEGORY_STORAGE_KEY);
+    if (saved && CATEGORIES.some(c => c.id === saved)) return saved;
+  } catch (_) {}
+  return 'general';
+}
+
 function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegionFocus = 0 }) {
   useLanguage();
   const danmakuSource = useDanmakuSource();
+  const [category, setCategory] = useState(readSavedCategory);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [settings, setSettings] = useState(null);
   const [saved, setSaved] = useState(false);
   const [proxyOpen, setProxyOpen] = useState(false);
   const [proxyDraft, setProxyDraft] = useState(null);
+  const [wakeModalOpen, setWakeModalOpen] = useState(false);
+  const [pathCopied, setPathCopied] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -70,6 +137,29 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
   const pictureModeRequest = useRef({ pending: false, version: 0 });
   const editedKeys = useRef(new Set());
   const savedTimer = useRef(null);
+  const searchWrapRef = useRef(null);
+
+  const selectCategory = (id) => {
+    setCategory(id);
+    try { localStorage.setItem(CATEGORY_STORAGE_KEY, id); } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (wakeRegionFocus > 0) {
+      selectCategory('mini-window');
+      setWakeModalOpen(true);
+    }
+  }, [wakeRegionFocus]);
+
+  useEffect(() => {
+    const onDocDown = (e) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, []);
 
   const loadSettings = async () => {
     setLoadError('');
@@ -77,7 +167,6 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
     catch (error) { setLoadError(error.message || '设置加载失败，请重试'); }
   };
 
-  // 重新进入设置页时同步播放器里刚改过的共享选项；保留用户未保存的字段。
   const refreshSettings = async () => {
     if (savingRef.current) return;
     const modeVersion = pictureModeRequest.current.version;
@@ -159,7 +248,6 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
     setSaved(false);
     setSaveError('');
     try {
-      // Submit only edited fields; the main process merges newer playback options.
       const editable = ['root', 'name_format', 'download_quality', 'download_metadata', 'cache_next_episode', 'compat_mode', 'auto_delete_watched', 'show_danmaku_controls', 'max_concurrent', 'proxy_enabled', 'proxy_mode', 'proxy_host', 'proxy_port', 'proxy_username', 'proxy_password', 'watch_updates_enabled', 'watch_sequels_enabled', 'watch_notifications_enabled', 'search_app_enabled', 'app_updates_enabled'];
       const submitted = {};
       for (const key of editable) {
@@ -169,9 +257,9 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
       const res = await window.electronAPI.saveSettings(submitted);
       if (!res?.success) throw new Error(res?.error || '设置未保存，请重试');
       if (isProxy) closeProxy();
-      const saved = await window.electronAPI.getSettings();
-      setSettings(saved);
-      window.dispatchEvent(new CustomEvent('hongguo-playback-settings', { detail: saved }));
+      const freshSaved = await window.electronAPI.getSettings();
+      setSettings(freshSaved);
+      window.dispatchEvent(new CustomEvent('hongguo-playback-settings', { detail: freshSaved }));
       editedKeys.current.clear();
       setDirty(false);
       setSaved(true);
@@ -194,7 +282,6 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
     setTestResult(null);
   };
 
-  // ===== 代理弹窗 =====
   const openProxyModal = () => {
     testVersion.current++;
     setProxyDraft({
@@ -235,202 +322,499 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
   const applyProxy = () => persist({ ...settings, ...proxyDraft }, true);
 
   useDialogKeyboard(active && proxyOpen, () => { if (!savingRef.current) closeProxy(); }, '.proxy-modal');
+  useDialogKeyboard(active && wakeModalOpen, () => { setWakeModalOpen(false); void refreshSettings(); }, '.wake-area-modal');
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return SEARCH_INDEX.filter(item =>
+      t(item.label).toLowerCase().includes(q) ||
+      item.label.toLowerCase().includes(q) ||
+      item.keywords.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [searchQuery]);
 
   if (!settings) {
-    return <div className="settings-container">{t(loadError ? <div role="alert"><p>{t(loadError)}</p><button className="btn btn-outline" onClick={loadSettings}>{t("重新加载")}</button></div> : '加载中...')}</div>;
+    return (
+      <div className="settings-container">
+        {loadError
+          ? <div role="alert" className="alert alert-error"><p>{t(loadError)}</p><button className="btn btn-outline btn-sm" onClick={loadSettings}>{t("重新加载")}</button></div>
+          : <p className="settings-hint">{t('加载中...')}</p>}
+      </div>
+    );
   }
 
   const proxyInfo = describeProxy(settings);
   const mode = proxyDraft ? proxyDraft.proxy_mode : 'system';
+  const activeCat = CATEGORIES.find(c => c.id === category) || CATEGORIES[0];
+  const wakeRegion = validWakeRegion(settings.stealth_wake_region) ? settings.stealth_wake_region : FULL_WAKE_REGION;
+  const isFullWake = Math.abs(wakeRegion.x) < 1e-6 && Math.abs(wakeRegion.y) < 1e-6 && Math.abs(wakeRegion.width - 1) < 1e-6 && Math.abs(wakeRegion.height - 1) < 1e-6;
+  const wakeSummary = isFullWake
+    ? t('唤醒区域：全窗')
+    : `${t('唤醒区域')}：${Math.round(wakeRegion.x * 100)}%, ${Math.round(wakeRegion.y * 100)}% · ${Math.round(wakeRegion.width * 100)}% × ${Math.round(wakeRegion.height * 100)}%`;
+
+  const copyConfigPath = async () => {
+    const pathText = appInfo?.dataDir || '';
+    if (!pathText) return;
+    try {
+      await navigator.clipboard?.writeText(pathText);
+      setPathCopied(true);
+      setTimeout(() => setPathCopied(false), 1800);
+    } catch (_) {}
+  };
 
   return (
     <div className="settings-container">
-      <div className="settings-header">
-        <Settings size={22} />
-        <div><h2>{t("设置")}</h2><p className="page-description">{t("让下载、保存和网络连接，按你的习惯运行。")}</p></div>
+      <div className="settings-shell">
+        {/* Left Sticky Category Navigation */}
+        <nav className="settings-nav" aria-label={t("设置分类")}>
+          <div className="settings-nav-title">
+            <Settings size={17} />
+            <span>{t("设置")}</span>
+          </div>
+          <div className="settings-nav-list">
+            {CATEGORIES.map((cat) => {
+              const Icon = cat.icon;
+              const isCurrent = category === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  className={`settings-nav-item ${isCurrent ? 'is-active' : ''}`}
+                  aria-current={isCurrent ? 'page' : undefined}
+                  onClick={() => selectCategory(cat.id)}
+                >
+                  <Icon size={15} />
+                  <span>{t(cat.label)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
+        {/* Right Content Area */}
+        <div className="settings-content-col">
+          {/* 11. Sticky Settings Header */}
+          <header className="settings-sticky-header">
+            <div className="settings-header-left">
+              <h2>{t(activeCat.label)}</h2>
+              <p className="settings-header-desc">{t(activeCat.desc)}</p>
+            </div>
+            <div className="settings-header-right">
+              <div className="settings-search-wrap" ref={searchWrapRef}>
+                <Search size={14} />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onFocus={() => setSearchOpen(true)}
+                  onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                  placeholder={t("搜索设置…")}
+                  aria-label={t("搜索设置…")}
+                />
+                {searchOpen && searchResults.length > 0 && (
+                  <div className="settings-search-dropdown" role="listbox">
+                    {searchResults.map((item) => {
+                      const cat = CATEGORIES.find(c => c.id === item.category);
+                      return (
+                        <button
+                          key={`${item.category}-${item.label}`}
+                          type="button"
+                          className="settings-search-item"
+                          onClick={() => {
+                            selectCategory(item.category);
+                            setSearchQuery('');
+                            setSearchOpen(false);
+                          }}
+                        >
+                          <span>{t(item.label)}</span>
+                          <em>{t(cat?.label || '')}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-primary btn-sm settings-save-btn"
+                disabled={saving || !dirty}
+                onClick={save}
+              >
+                {saving ? t('正在保存…') : saved ? <><Check size={14} /><span>{t("已保存")}</span></> : t('保存设置')}
+              </button>
+            </div>
+          </header>
+
+          {saveError && !proxyOpen && <p className="alert alert-error" role="alert">{t(saveError)}</p>}
+          {dirty && <p className="settings-dirty-banner" role="status">{t("有未保存的修改，点击右上角「保存设置」生效。")}</p>}
+
+          {/* Active Category Panel */}
+          <div className="settings-panel">
+            {/* 3. General */}
+            {category === 'general' && (
+              <section className="settings-section" aria-label={t("外观设置")}>
+                <AppearanceSettings active={active} />
+              </section>
+            )}
+
+            {/* 4. Playback */}
+            {category === 'playback' && (
+              <fieldset className="settings-fieldset" disabled={saving}>
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("播放与缓存")}</h3>
+                  <div className="settings-switch-list">
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("缓存后续 2 集")}</span>
+                        <em>{t("开始播放后最多预取接下来两集可在线播放的分集，减少连续切集等待；会使用网络流量。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.cache_next_episode !== false} onChange={e => update('cache_next_episode', e.target.checked)} />
+                    </label>
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("自动兼容模式")}</span>
+                        <em>{t("无法解码时尝试转码播放，解决部分黑屏有声问题。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.compat_mode !== false} onChange={e => update('compat_mode', e.target.checked)} />
+                    </label>
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("看完自动删除")}</span>
+                        <em>{t("看完一集后删除该集已下载的视频、在线播放缓存和转码缓存。下载文件会永久删除；保存后生效。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.auto_delete_watched === true} onChange={e => update('auto_delete_watched', e.target.checked)} />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("弹幕按钮设置")}</h3>
+                  <div className="settings-switch-list">
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("显示弹幕按钮")}</span>
+                        <em>{t("保存后生效。关闭时隐藏弹幕及弹幕设置按钮，并停用弹幕；再次开启会恢复原有弹幕偏好。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" aria-label={t("显示弹幕按钮")} checked={settings.show_danmaku_controls !== false} onChange={e => update('show_danmaku_controls', e.target.checked)} />
+                    </label>
+                  </div>
+                  <div className="settings-grid-2 settings-sub-row">
+                    <div className="settings-group">
+                      <label className="settings-label" htmlFor="danmaku-source">{t("弹幕来源")}</label>
+                      <select id="danmaku-source" className="input-field select-field" value={danmakuSource} onChange={event => writeDanmakuSource(event.target.value)}>
+                        <option value="official">{t("时间轴弹幕")}</option>
+                        <option value="comments">{t("本集评论（备用）")}</option>
+                      </select>
+                      <p className="settings-hint">{t("切换立即生效，仅请求所选来源。")}</p>
+                    </div>
+                    <div className="settings-group settings-align-end">
+                      <button type="button" className="btn btn-outline btn-sm" onClick={async () => {
+                        try {
+                          const result = await window.electronAPI.openExternalUrl('https://github.com/dawei233/hongguo-drama');
+                          if (result?.success === false) throw new Error(result.error || '来源链接打开失败');
+                        } catch (error) { setSaveError(error.message || '来源链接打开失败'); }
+                      }}>{t("弹幕实现参考 dawei233/hongguo-drama（GPL-3.0）")}</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("搜索偏好")}</h3>
+                  <div className="settings-switch-list">
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("优先使用红果 App 搜索")}</span>
+                        <em>{t("失败或空结果自动回退官网；关闭此项时，官网不可用仍会尝试 App 备用搜索。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" aria-label={t("优先使用红果 App 搜索")} checked={settings.search_app_enabled === true} onChange={e => update('search_app_enabled', e.target.checked)} />
+                    </label>
+                  </div>
+                </section>
+              </fieldset>
+            )}
+
+            {/* 5. Downloads */}
+            {category === 'downloads' && (
+              <fieldset className="settings-fieldset" disabled={saving}>
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("存储位置与剧集资料")}</h3>
+                  <div className="settings-group">
+                    <label className="settings-label">{t("下载目录")}</label>
+                    <div className="folder-row">
+                      <input
+                        type="text"
+                        className="input-field"
+                        aria-label={t("下载目录")}
+                        value={settings.root || ''}
+                        onChange={(e) => update('root', e.target.value)}
+                        placeholder={t("选择下载保存目录")}
+                      />
+                      <button type="button" className="btn btn-outline" onClick={selectFolder}>
+                        <Folder size={15} /><span>{t("选择文件夹")}</span>
+                      </button>
+                    </div>
+                    <p className="settings-hint">{t("文件将保存到 ")}<code>{t("下载目录/红果短剧/剧名/")}</code>{t(" 下")}</p>
+                  </div>
+
+                  <div className="settings-switch-list">
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("普通下载保存整剧资料")}</span>
+                        <em>{t("自动随视频保存封面、简介和 tvshow.nfo，不生成分集 NFO。可将下载目录设为已挂载的 NAS。")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" aria-label={t("普通下载保存整剧资料")} checked={settings.download_metadata === true} onChange={e => update('download_metadata', e.target.checked)} />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("画质、并发与命名")}</h3>
+                  <div className="settings-grid-2">
+                    <div className="settings-group">
+                      <label className="settings-label" htmlFor="default-download-quality">{t("默认下载清晰度")}</label>
+                      <select id="default-download-quality" className="input-field select-field"
+                        value={settings.download_quality || 'auto'} aria-describedby="default-download-quality-hint"
+                        onChange={(event) => update('download_quality', event.target.value)}>
+                        <option value="auto">{t("自动（兼容优先）")}</option>
+                        <option value="1080p">1080P</option>
+                        <option value="720p">720P</option>
+                      </select>
+                      <p className="settings-hint" id="default-download-quality-hint">{t("所选清晰度不可用时自动尝试更低清晰度；已有文件不覆盖。")}</p>
+                    </div>
+
+                    <div className="settings-group">
+                      <label className="settings-label">{t("最大并发下载数")}</label>
+                      <select
+                        className="input-field select-field"
+                        aria-label={t("最大并发下载数")}
+                        value={settings.max_concurrent || 3}
+                        onChange={(e) => update('max_concurrent', parseInt(e.target.value, 10))}
+                      >
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                          <option key={n} value={n}>{t(n)}{t(" 个同时下载")}</option>
+                        ))}
+                      </select>
+                      <p className="settings-hint">{t("同时下载 ")}<b>{settings.max_concurrent || 3}</b>{t(" 集（保存后立即生效）。建议 3~5。")}</p>
+                    </div>
+                  </div>
+
+                  <div className="settings-group settings-sub-row">
+                    <label className="settings-label">{t("文件命名规则")}</label>
+                    <div className="preset-row">
+                      {FORMAT_PRESETS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          className={`btn-chip ${settings.name_format === p.value ? 'btn-chip-primary' : ''}`}
+                          onClick={() => update('name_format', p.value)}
+                        >
+                          {t(p.label)}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      className="input-field"
+                      aria-label={t("文件命名规则")}
+                      value={settings.name_format || ''}
+                      onChange={(e) => update('name_format', e.target.value)}
+                    />
+                    <p className="settings-hint">
+                      {t("可用变量：")}<code>{t("剧名")}</code> · <code>{t("集数")}</code> · <code>{t("标题")}</code>
+                      {' · '}<span>{t("预览")}：<code>{previewFilename(settings.name_format)}</code></span>
+                    </p>
+                  </div>
+                </section>
+              </fieldset>
+            )}
+
+            {/* 6. Sources & Proxy */}
+            {category === 'sources' && (
+              <div className="settings-fieldset">
+                <BuiltinSources />
+                <CustomSources active={active} />
+                <fieldset className="settings-card" disabled={saving} aria-label={t("网络代理")}>
+                  <div className="settings-group">
+                    <div className="custom-sources-head-row">
+                      <div>
+                        <h3 className="settings-section-title">{t("网络代理")}</h3>
+                        <p className="settings-hint">{t("手动代理用于接口、下载和应用内浏览器；跟随系统时读取启动环境代理。保存后立即生效。")}</p>
+                      </div>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={openProxyModal}>
+                        <Globe size={14} /><span>{t("配置代理")}</span>
+                      </button>
+                    </div>
+                    <div className="proxy-status-row">
+                      <span className={`proxy-dot ${proxyInfo.on ? 'proxy-dot-on' : 'proxy-dot-off'}`} />
+                      <span className="proxy-status-text">
+                        {t(proxyInfo.on ? <>{t("已启用：")}<code>{proxyInfo.text}</code></> : proxyInfo.text)}
+                      </span>
+                    </div>
+                  </div>
+                </fieldset>
+              </div>
+            )}
+
+            {/* 7. Shortcuts */}
+            {category === 'shortcuts' && (
+              <div className="settings-fieldset">
+                <ShortcutSettings active={active} />
+              </div>
+            )}
+
+            {/* 8. Notifications */}
+            {category === 'notifications' && (
+              <fieldset className="settings-fieldset" disabled={saving}>
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("追剧提醒")}</h3>
+                  <div className="settings-switch-list">
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("自动检查新集")}</span>
+                        <em>{t("应用运行期间，每部剧约 6 小时检查一次；列表较多时分批检查")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.watch_updates_enabled !== false} onChange={e => update('watch_updates_enabled', e.target.checked)} />
+                    </label>
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("查找疑似新一季")}</span>
+                        <em>{t("约每天按剧名搜索一次，仅提示同名且季数更高的剧；可能遗漏或误报")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.watch_sequels_enabled !== false} onChange={e => update('watch_sequels_enabled', e.target.checked)} />
+                    </label>
+                    <label className="settings-switch-row">
+                      <div className="settings-switch-info">
+                        <span>{t("发送系统通知")}</span>
+                        <em>{t("默认关闭。开启后需允许系统通知；关闭不影响观看记录红点")}</em>
+                      </div>
+                      <input type="checkbox" role="switch" checked={settings.watch_notifications_enabled === true} onChange={e => update('watch_notifications_enabled', e.target.checked)} />
+                    </label>
+                  </div>
+                </section>
+
+                {!preview && (
+                  <section className="settings-card">
+                    <AnnouncementSettings />
+                  </section>
+                )}
+              </fieldset>
+            )}
+
+            {/* 9. Mini Window */}
+            {category === 'mini-window' && (
+              <div className="settings-fieldset">
+                <section className="settings-card" aria-label={t("画中画小窗设置")}>
+                  <h3 className="settings-section-title">{t("画中画小窗")}</h3>
+                  <div className="settings-group">
+                    <label className="settings-label" htmlFor="picture-in-picture-mode">{t("画中画模式")}</label>
+                    <select id="picture-in-picture-mode" className="input-field select-field"
+                      value={settings.picture_in_picture_mode === 'native' ? 'native' : 'custom'}
+                      disabled={!active || saving || pictureModeSaving}
+                      aria-describedby="picture-in-picture-mode-hint"
+                      onChange={changePictureInPictureMode}>
+                      <option value="native">{t("系统原生")}</option>
+                      <option value="custom">{t("应用自带")}</option>
+                    </select>
+                    <p className="settings-hint" id="picture-in-picture-mode-hint">{t("选择立即自动保存。系统原生使用操作系统画中画；应用自带可显示当前剧名并支持返回主窗口。")}</p>
+                    {(pictureModeSaving || pictureModeNotice) && <p className="settings-hint" role="status">{t(pictureModeSaving ? '正在保存…' : pictureModeNotice)}</p>}
+                    {pictureModeError && <p className="appearance-error" role="alert">{t(pictureModeError)}</p>}
+                  </div>
+                </section>
+
+                {window.electronAPI.platform !== 'android' && (
+                  <section className="settings-card" aria-label={t('小窗模式')}>
+                    <div className="custom-sources-head-row">
+                      <div>
+                        <h3 className="settings-section-title">{t("小窗模式：隐藏后唤醒区域")}</h3>
+                        <p className="settings-hint">{wakeSummary}</p>
+                      </div>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => setWakeModalOpen(true)}>
+                        {t("配置唤醒区域")}
+                      </button>
+                    </div>
+                    <p className="settings-hint">{t("播放页顶部可开启小窗模式：窗口缩小、置顶；鼠标移开时暂停隐藏，移回指定唤醒区域继续。")}</p>
+                  </section>
+                )}
+              </div>
+            )}
+
+            {/* 10. About & Updates */}
+            {category === 'about' && (
+              <fieldset className="settings-fieldset" disabled={saving}>
+                <section className="settings-card">
+                  <h3 className="settings-section-title">{t("配置文件位置")}</h3>
+                  {settings.proxy_password_warning && <p className="alert alert-error" role="alert">{t(settings.proxy_password_warning)}</p>}
+                  <div className="folder-row">
+                    <input type="text" readOnly className="input-field settings-mono-input" value={appInfo?.dataDir || t('系统配置目录')} aria-label={t("配置文件位置")} />
+                    {appInfo?.dataDir && (
+                      <button type="button" className="btn btn-outline btn-sm" onClick={copyConfigPath}>
+                        {pathCopied ? <><Check size={14} /><span>{t("已复制")}</span></> : <><Copy size={14} /><span>{t("复制路径")}</span></>}
+                      </button>
+                    )}
+                  </div>
+                  <p className="settings-hint">{t("代理密码由本机系统安全存储加密；更换电脑后可能需要重新输入。")}</p>
+                  {appInfo?.configNote
+                    ? <p className="settings-hint" role="status">{t(appInfo.configNote)}</p>
+                    : <p className="settings-hint">{t(appInfo?.configMode === 'portable'
+                      ? '便携版：设置、下载记录与界面数据保存在程序目录的 data 文件夹。'
+                      : '设置、下载记录与界面数据保存在系统用户目录；更换电脑时可复制这个文件夹。')}</p>}
+                </section>
+
+                {preview ? (
+                  <section className="settings-card">
+                    <h3 className="settings-section-title">{t("独立预览")}</h3>
+                    <p className="settings-hint">{t("预览数据独立保存，不接收正式版更新，不会覆盖已安装的红果短剧。")}</p>
+                  </section>
+                ) : (
+                  <section className="settings-card">
+                    <div className="custom-sources-head-row">
+                      <div>
+                        <h3 className="settings-section-title">{t("检测更新与版本")}</h3>
+                        <p className="settings-hint">{appInfo?.version ? `${t("当前版本")}：v${appInfo.version}` : t('红果短剧桌面版')}</p>
+                      </div>
+                      <button type="button" className="btn btn-outline btn-sm" disabled={settings.app_updates_enabled === false} onClick={() => window.dispatchEvent(new CustomEvent('hongguo-check-app-update'))}>
+                        <RefreshCw size={14} /><span>{t("检查更新")}</span>
+                      </button>
+                    </div>
+                    <div className="settings-switch-list">
+                      <label className="settings-switch-row">
+                        <div className="settings-switch-info">
+                          <span>{t("自动检测更新")}</span>
+                          <em>{t("启动时及运行期间每 6 小时检查正式新版。保存后生效；下载和重启安装都由你点击确认。")}</em>
+                        </div>
+                        <input type="checkbox" role="switch" aria-label={t("自动检测更新")} checked={settings.app_updates_enabled !== false} onChange={e => update('app_updates_enabled', e.target.checked)} />
+                      </label>
+                    </div>
+                  </section>
+                )}
+              </fieldset>
+            )}
+          </div>
+        </div>
       </div>
 
-      <section className="settings-card" aria-label={t("外观设置")}><AppearanceSettings active={active} /></section>
-      <fieldset className="settings-card" disabled={saving} aria-label={t("网络代理")}>
-        <div className="settings-group">
-          <label className="settings-label">{t("网络代理")}</label>
-          <div className="proxy-status-row">
-            <span className={`proxy-dot ${proxyInfo.on ? 'proxy-dot-on' : 'proxy-dot-off'}`} />
-            <span className="proxy-status-text">
-              {t(proxyInfo.on ? <>{t("已启用：")}<code>{proxyInfo.text}</code></> : proxyInfo.text)}
-            </span>
-            <button className="btn btn-outline btn-sm" onClick={openProxyModal}>
-              <Globe size={15} />{t("配置代理")}</button>
-          </div>
-          <p className="settings-hint">{t("手动代理用于接口、下载和应用内浏览器；跟随系统时，接口与下载读取启动时的环境代理及绕过规则，发现页等浏览器请求使用系统代理。保存后立即生效。")}</p>
-        </div>
-
-      </fieldset>
-      <ShortcutSettings active={active} />
-      <section className="settings-card" aria-label={t("画中画小窗设置")}>
-        <div className="settings-group">
-          <label className="settings-label" htmlFor="picture-in-picture-mode">{t("画中画小窗")}</label>
-          <select id="picture-in-picture-mode" className="input-field select-field"
-            value={settings.picture_in_picture_mode === 'native' ? 'native' : 'custom'}
-            disabled={!active || saving || pictureModeSaving}
-            aria-describedby="picture-in-picture-mode-hint"
-            onChange={changePictureInPictureMode}>
-            <option value="native">{t("系统原生")}</option>
-            <option value="custom">{t("应用自带")}</option>
-          </select>
-          <p className="settings-hint" id="picture-in-picture-mode-hint">{t("选择立即自动保存。已打开的小窗不会被中断或切换，下次开启时生效。系统原生使用操作系统的画中画能力；应用自带可显示当前剧名，并支持返回主窗口。")}</p>
-          {(pictureModeSaving || pictureModeNotice) && <p className="settings-hint" role="status">{t(pictureModeSaving ? '正在保存…' : pictureModeNotice)}</p>}
-          {pictureModeError && <p className="appearance-error" role="alert">{t(pictureModeError)}</p>}
-        </div>
-      </section>
-      {window.electronAPI.platform !== 'android' && <section className="settings-card" aria-label={t('小窗模式')}>
-        <StealthWakeRegion active={active} focusRequest={wakeRegionFocus} />
-      </section>}
-      <BuiltinSources />
-      <CustomSources active={active} />
-      <p className="settings-hint">{t("播放页顶部可开启小窗模式：窗口缩小、置顶并在支持的系统上跨虚拟桌面可见；鼠标移开时暂停隐藏，移回继续，Esc 或 Dock 可恢复主窗口。")}</p>
-      <fieldset className="settings-card" disabled={saving}>
-        <div className="settings-group">
-          <span className="settings-label">{t("播放与缓存")}</span>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.cache_next_episode !== false} onChange={event => update('cache_next_episode', event.target.checked)} /><span className="proxy-switch-text">{t("缓存后续 2 集")}<em>{t("开始播放后最多预取接下来两集可在线播放的分集，减少连续切集等待；会使用网络流量。")}</em></span></label>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.compat_mode !== false} onChange={event => update('compat_mode', event.target.checked)} /><span className="proxy-switch-text">{t("自动兼容模式")}<em>{t("无法解码时尝试转码播放，解决部分黑屏有声问题。")}</em></span></label>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.auto_delete_watched === true} onChange={event => update('auto_delete_watched', event.target.checked)} /><span className="proxy-switch-text">{t("看完自动删除")}<em>{t("看完一集后删除该集已下载的视频、在线播放缓存和转码缓存。下载文件会永久删除；需要时可重新下载。保存后生效。")}</em></span></label>
-          <label className="proxy-switch-row"><input type="checkbox" aria-label={t("优先使用红果 App 搜索")} checked={settings.search_app_enabled === true} onChange={event => update('search_app_enabled', event.target.checked)} /><span className="proxy-switch-text">{t("优先使用红果 App 搜索")}<em>{t("失败或空结果自动回退官网；关闭此项时，官网不可用仍会尝试 App 备用搜索。")}</em></span></label>
-        </div>
-        <div className="settings-group">
-          <span className="settings-label">{t("弹幕按钮设置")}</span>
-          <div className="settings-inline-save">
-          <label className="proxy-switch-row"><input type="checkbox" aria-label={t("显示弹幕按钮")} checked={settings.show_danmaku_controls !== false} onChange={event => update('show_danmaku_controls', event.target.checked)} /><span className="proxy-switch-text">{t("显示弹幕按钮")}<em>{t("保存后生效。关闭时隐藏弹幕及弹幕设置按钮，并停用弹幕；再次开启会恢复原有弹幕偏好。")}</em></span></label>
-            <button type="button" className="btn btn-primary" aria-label={t("保存当前设置")} onClick={save}>{t(saving ? '保存中…' : saved ? '已保存' : '保存')}</button>
-          </div>
-        </div>
-        <div className="settings-group">
-          <label className="settings-label" htmlFor="danmaku-source">{t("弹幕来源")}</label>
-          <select id="danmaku-source" className="input-field select-field" value={danmakuSource} onChange={event => writeDanmakuSource(event.target.value)}>
-            <option value="official">{t("时间轴弹幕")}</option><option value="comments">{t("本集评论（备用）")}</option>
-          </select>
-          <p className="settings-hint">{t("切换立即生效，仅请求所选来源。时间轴弹幕跟随视频进度；本集评论依次展示，与视频时间无对应。两种来源共用显示偏好。")}</p>
-          <button type="button" className="btn btn-outline btn-sm" onClick={async () => {
-            try {
-              const result = await window.electronAPI.openExternalUrl('https://github.com/dawei233/hongguo-drama');
-              if (result?.success === false) throw new Error(result.error || '来源链接打开失败');
-            } catch (error) { setSaveError(error.message || '来源链接打开失败'); }
-          }}>{t("弹幕实现参考 dawei233/hongguo-drama（GPL-3.0）")}</button>
-        </div>
-        <div className="settings-group">
-          <label className="settings-label">{t("下载目录")}</label>
-          <div className="folder-row">
-            <input
-              type="text"
-              className="input-field"
-              aria-label={t("下载目录")}
-              value={settings.root || ''}
-              onChange={(e) => update('root', e.target.value)}
-              placeholder={t("选择下载保存目录")}
-            />
-            <button className="btn btn-outline" onClick={selectFolder}>
-              <Folder size={16} />{t("选择文件夹")}</button>
-          </div>
-          <p className="settings-hint">{t("文件将保存到 ")}<code>{t("下载目录/红果短剧/剧名/")}</code>{t(" 下")}</p>
-          <label className="proxy-switch-row"><input type="checkbox" aria-label={t("普通下载保存整剧资料")} checked={settings.download_metadata === true}
-            onChange={event => update('download_metadata', event.target.checked)} /><span className="proxy-switch-text">{t("普通下载保存整剧资料")}<em>{t("自动随视频保存封面、简介和 tvshow.nfo，不生成分集 NFO。可将下载目录设为已挂载的 NAS，程序会自动建剧名文件夹，无需再使用“下载到 NAS”。普通下载仍遵循看完自动删除设置。")}</em></span></label>
-        </div>
-
-        <div className="settings-group">
-          <label className="settings-label">{t("文件命名规则")}</label>
-          <div className="preset-row">
-            {FORMAT_PRESETS.map((p) => (
-              <button
-                key={p.value}
-                className={`btn-chip ${settings.name_format === p.value ? 'btn-chip-primary' : ''}`}
-                onClick={() => update('name_format', p.value)}
-              >
-                {t(p.label)}
+      {/* Wake Area Modal */}
+      {wakeModalOpen && window.electronAPI.platform !== 'android' && (
+        <div className="proxy-modal-mask" onClick={() => { setWakeModalOpen(false); void refreshSettings(); }}>
+          <div className="proxy-modal wake-area-modal" role="dialog" aria-modal="true" aria-label={t("小窗唤醒区域")} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+            <div className="proxy-modal-head">
+              <div className="proxy-modal-title">
+                <PictureInPicture size={18} />
+                <span>{t("配置唤醒区域")}</span>
+              </div>
+              <button type="button" className="icon-btn" title={t("关闭")} onClick={() => { setWakeModalOpen(false); void refreshSettings(); }}>
+                <X size={16} />
               </button>
-            ))}
+            </div>
+            <div className="proxy-modal-body">
+              <StealthWakeRegion active={active && wakeModalOpen} focusRequest={wakeRegionFocus} />
+            </div>
           </div>
-          <input
-            type="text"
-            className="input-field mt8"
-            aria-label={t("文件命名规则")}
-            value={settings.name_format || ''}
-            onChange={(e) => update('name_format', e.target.value)}
-          />
-          <p className="settings-hint">{t("可用变量：")}<code>{t("剧名")}</code> · <code>{t("集数")}</code>{t("（如 001）· ")}<code>{t("标题")}</code>{t("。每集保留独立集号，避免同名覆盖。")}</p>
         </div>
+      )}
 
-        <div className="settings-group">
-          <label className="settings-label" htmlFor="default-download-quality">{t("默认下载清晰度")}</label>
-          <select id="default-download-quality" className="input-field select-field"
-            value={settings.download_quality || 'auto'} aria-describedby="default-download-quality-hint"
-            onChange={(event) => update('download_quality', event.target.value)}>
-            <option value="auto">{t("自动（兼容优先）")}</option>
-            <option value="1080p">1080P</option>
-            <option value="720p">720P</option>
-          </select>
-          <p className="settings-hint" id="default-download-quality-hint">{t("保存后用于新建下载任务，也可在下载时单独选择。红果片源所选清晰度不可用或下载失败时，自动尝试更低清晰度，并在下载管理中提示；已有文件不自动删除或覆盖。")}</p>
-        </div>
-
-        <div className="settings-group">
-          <label className="settings-label">{t("最大并发下载数")}</label>
-          <select
-            className="input-field select-field"
-            aria-label={t("最大并发下载数")}
-            value={settings.max_concurrent || 3}
-            onChange={(e) => update('max_concurrent', parseInt(e.target.value, 10))}
-          >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-              <option key={n} value={n}>{t(n)}{t(" 个同时下载")}</option>
-            ))}
-          </select>
-          <p className="settings-hint">{t("同时下载 ")}<b>{settings.max_concurrent || 3}</b>{t(" 集（保存后立即生效）。 并发越高越快，但可能触发接口限流，建议 3~5。")}</p>
-        </div>
-
-
-        <div className="settings-group">
-          <span className="settings-label">{t("追剧提醒")}</span>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.watch_updates_enabled !== false} onChange={event => update('watch_updates_enabled', event.target.checked)} /><span className="proxy-switch-text">{t("自动检查新集")}<em>{t("应用运行期间，每部剧约 6 小时检查一次；列表较多时分批检查")}</em></span></label>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.watch_sequels_enabled !== false} onChange={event => update('watch_sequels_enabled', event.target.checked)} /><span className="proxy-switch-text">{t("查找疑似新一季")}<em>{t("约每天按剧名搜索一次，仅提示同名且季数更高的剧；可能遗漏或误报")}</em></span></label>
-          <label className="proxy-switch-row"><input type="checkbox" checked={settings.watch_notifications_enabled === true} onChange={event => update('watch_notifications_enabled', event.target.checked)} /><span className="proxy-switch-text">{t("发送系统通知")}<em>{t("默认关闭。开启后还需允许 macOS 通知；关闭不影响观看记录红点")}</em></span></label>
-        </div>
-
-        <div className="settings-group">
-          <span className="settings-label">{t("配置文件位置")}</span>
-          {settings.proxy_password_warning && <p className="alert alert-error" role="alert">{t(settings.proxy_password_warning)}</p>}
-          <p className="settings-hint">{t("代理密码由本机系统安全存储加密；更换电脑后可能需要重新输入。")}</p>
-          <p className="settings-hint settings-path"><code>{t(appInfo?.dataDir || '系统配置目录')}</code></p>
-          {appInfo?.configNote
-            ? <p className="settings-hint" role="status">{t(appInfo.configNote)}</p>
-            : <p className="settings-hint">{t(appInfo?.configMode === 'portable'
-              ? '便携版：设置、下载记录与界面数据保存在程序目录的 data 文件夹；从旧版本切换时，原系统目录里的搜索历史不会自动带入。移动或备份程序时请连同该文件夹一起保留。'
-              : '设置、下载记录与界面数据保存在系统用户目录；更换电脑时可复制这个文件夹。')}</p>}
-        </div>
-
-        {preview ? <>
-        <div className="settings-group">
-          <span className="settings-label">{t("独立预览")}</span>
-          <p className="settings-hint">{t("预览数据独立保存，不接收正式版更新，不会覆盖已安装的红果短剧。")}</p>
-        </div>
-        </> : <>
-        <div className="settings-group">
-          <span className="settings-label">{t("检测更新")}</span>
-          <label className="proxy-switch-row"><input type="checkbox" aria-label={t("自动检测更新")} checked={settings.app_updates_enabled !== false} onChange={event => update('app_updates_enabled', event.target.checked)} /><span className="proxy-switch-text">{t("自动检测更新")}<em>{t("启动时及运行期间每 6 小时检查正式新版。保存后生效；下载和重启安装都由你点击确认。")}</em></span></label>
-          <button type="button" className="btn btn-outline" disabled={settings.app_updates_enabled === false} onClick={() => window.dispatchEvent(new CustomEvent('hongguo-check-app-update'))}><RefreshCw size={15} />{t("检查更新")}</button>
-          <p className="settings-hint">{t("可重新打开已关闭的更新提醒、查看下载进度或安装已下载的新版。关闭检测后需重新开启并保存。")}</p>
-        </div>
-        </>}
-
-        {!preview && <AnnouncementSettings />}
-
-        <div className="settings-footer">
-          {dirty && <span className="settings-hint" role="status">{t("有未保存的修改")}</span>}
-          <button className="btn btn-primary" onClick={save}>
-            {t(saving ? '正在保存…' : saved ? <><Check size={16} />{t(" 已保存")}</> : '保存设置')}
-          </button>
-        </div>
-        {saveError && !proxyOpen && <p className="alert alert-error" role="alert">{t(saveError)}</p>}
-      </fieldset>
-
+      {/* Network Proxy Modal */}
       {proxyOpen && proxyDraft && (
         <div className="proxy-modal-mask" onClick={() => !saving && closeProxy()}>
           <div className="proxy-modal" role="dialog" aria-modal="true" aria-label={t("网络代理设置")} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
@@ -589,6 +973,5 @@ function SettingsPage({ active = true, preview = false, appInfo = null, wakeRegi
     </div>
   );
 }
-
 
 export default SettingsPage;

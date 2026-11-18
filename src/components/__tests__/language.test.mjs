@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveLanguage, systemLocale, readPreference, savePreference } from '../../i18n/language.mjs';
-test('Chinese systems use Chinese; all other or unknown locales use English', () => {
+test('Chinese systems use Chinese; Vietnamese systems use Vietnamese; all other or unknown locales use English', () => {
   for (const locale of ['zh', 'zh-CN', 'zh_TW.UTF-8', 'zh-Hant-HK']) assert.equal(resolveLanguage('system', locale), 'zh-CN');
+  for (const locale of ['vi', 'vi-VN', 'vi_VN.UTF-8']) assert.equal(resolveLanguage('system', locale), 'vi');
   for (const locale of ['en-US', 'ja-JP', 'de_DE.UTF-8', 'C', '', undefined]) assert.equal(resolveLanguage('system', locale), 'en');
 });
 test('saved selection overrides system; unknown preferences follow system', () => {
   assert.equal(resolveLanguage('en', 'zh-CN'), 'en');
+  assert.equal(resolveLanguage('vi', 'en-US'), 'vi');
   assert.equal(resolveLanguage('zh-CN', 'fr-FR'), 'zh-CN');
   assert.equal(resolveLanguage('bad', 'en-US'), 'en');
 });

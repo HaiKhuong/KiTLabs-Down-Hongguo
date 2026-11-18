@@ -1,7 +1,7 @@
 import { t, useLanguage } from './i18n';
 // 红果短剧：版本及发行状态见 package.json 和 docs/release-6.4.md。
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { Film, Download, Settings, Play, Home, Search, Clock, User } from './components/icons';
+import { Film, Download, Settings, Play, Home, Search, Clock, User, Flame, Bookmark, Bell, RefreshCw, PanelLeftClose, PanelLeftOpen } from './components/icons';
 import HongguoDownload from './components/HongguoDownload';
 import DownloadManager from './components/DownloadManager';
 import SettingsPage from './components/Settings';
@@ -20,11 +20,11 @@ import AccountManagement from './components/AccountManagement';
 
 const MENU = [
   { id: 'browse', label: '发现短剧', icon: Home },
-  { id: 'feed', label: '热播推荐', icon: Film },
+  { id: 'feed', label: '热播推荐', icon: Flame },
   { id: 'download', label: '搜索与下载', icon: Search },
   { id: 'player', label: '我的剧库', icon: Play },
   { id: 'history', label: '观看记录', icon: Clock },
-  { id: 'calendar', label: '收藏与上新', icon: Clock },
+  { id: 'calendar', label: '收藏与上新', icon: Bookmark },
   { id: 'manager', label: '下载管理', icon: Download },
   { id: 'account', label: '红果账号', icon: User },
   { id: 'settings', label: '设置', icon: Settings },
@@ -56,6 +56,29 @@ export default function App({ platformPages = {} }) {
   const [calendarOpening, setCalendarOpening] = useState('');
   const [visited, setVisited] = useState(['browse']);
   const [storageError, setStorageError] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return window.localStorage.getItem('hongguo:sidebar-collapsed') === '1'; } catch { return false; }
+  });
+  const [headerSearch, setHeaderSearch] = useState('');
+  const headerSearchRef = useRef(null);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem('hongguo:sidebar-collapsed', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        headerSearchRef.current?.focus();
+        headerSearchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const [appInfo, setAppInfo] = useState(null); // { version, brand, appName }
   const [playerMounted, setPlayerMounted] = useState(false);
   const floatingPlayer = useRef(false);
@@ -191,12 +214,23 @@ export default function App({ platformPages = {} }) {
   const currentPage = MENU.find((item) => item.id === page);
 
   return (
-    <div className={`app-layout ${mobile ? 'platform-android' : ''} ${stealthMode ? 'stealth-mode' : ''} ${isMac ? 'platform-mac' : ''} layout-${layout} ${page === 'player' ? 'player-focused' : ''} ${borderless && page === 'player' && layout === 'portrait' ? 'player-borderless' : ''}`}>
+    <div className={`app-layout ${mobile ? 'platform-android' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${stealthMode ? 'stealth-mode' : ''} ${isMac ? 'platform-mac' : ''} layout-${layout} ${page === 'player' ? 'player-focused' : ''} ${borderless && page === 'player' && layout === 'portrait' ? 'player-borderless' : ''}`}>
       <aside className="sidebar" aria-label={t("主导航")}>
         <div className="sidebar-window-drag" aria-hidden="true" />
         <div className="sidebar-brand">
-          <div className="logo"><Play size={21} /></div>
-          <div><div className="brand-text">{t(appInfo?.appName || '红果短剧')}</div><div className="brand-sub">{t(appInfo?.preview ? '独立体验 · 本机保存' : '每一集，都值得期待')}</div></div>
+          <div className="sidebar-brand-left">
+            <div className="logo"><Play size={20} /></div>
+            <div className="sidebar-brand-text-wrap"><div className="brand-text">{t(appInfo?.appName || '红果短剧')}</div><div className="brand-sub">{t(appInfo?.preview ? '独立体验 · 本机保存' : '每一集，都值得期待')}</div></div>
+          </div>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={toggleSidebar}
+            title={t(sidebarCollapsed ? "展开组" : "收起")}
+            aria-label={t(sidebarCollapsed ? "展开组" : "收起")}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          </button>
         </div>
         <nav className="sidebar-menu">
           <div className="sidebar-group-label">{t("内容")}</div>
@@ -204,26 +238,58 @@ export default function App({ platformPages = {} }) {
             const Icon = item.icon;
             return (
               <button key={item.id} className={`sidebar-item ${page === item.id ? 'active' : ''}`}
-                aria-current={page === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}>
-                <Icon size={19} /><span>{t(item.label)}</span>
+                aria-current={page === item.id ? 'page' : undefined} title={t(item.label)} onClick={() => navigate(item.id)}>
+                <Icon size={18} /><span>{t(item.label)}</span>
               </button>
             );
           })}
         </nav>
         <div className="sidebar-footer">
           <button className={`sidebar-item ${page === 'settings' ? 'active' : ''}`}
-            aria-current={page === 'settings' ? 'page' : undefined} onClick={() => navigate('settings')}>
-            <Settings size={19} /><span>{t("设置")}</span>
+            aria-current={page === 'settings' ? 'page' : undefined} title={t("设置")} onClick={() => navigate('settings')}>
+            <Settings size={18} /><span>{t("设置")}</span>
           </button>
           <div className="footer-note"><span>{t(appInfo?.preview ? '功能预览' : '红果短剧')}</span><span>{t(appInfo?.version ? `v${appInfo.version.replace(/^(\d+\.\d+)\.0$/, '$1')}` : '')}</span></div>
         </div>
       </aside>
       <div className="main-wrapper">
         <header className="window-toolbar">
-          {mobile ? <><button className="mobile-back btn btn-outline btn-sm" aria-label={t("返回上一页")} onClick={() => window.appBack?.()}>{t("返回")}</button><h1 className="toolbar-location">{t(currentPage?.label)}</h1></> : <span className="toolbar-location">{t(currentPage?.label)}</span>}
+          <div className="toolbar-heading">
+            {mobile ? <><button className="mobile-back btn btn-outline btn-sm" aria-label={t("返回上一页")} onClick={() => window.appBack?.()}>{t("返回")}</button><h1 className="toolbar-location">{t(currentPage?.label)}</h1></> : <><h1 className="toolbar-location">{t(currentPage?.label)}</h1>{page === 'browse' && <span className="toolbar-subtitle">{t("挑一部喜欢的，让故事继续。")}</span>}</>}
+          </div>
           {page === 'player' && layout === 'portrait' && <PageMenu items={MENU} page={page} onNavigate={navigate} />}
           <div className="toolbar-actions">
-            <span className="toolbar-caption">{t(appInfo?.preview ? '功能预览' : '红果短剧')}</span>
+            {!mobile && layout !== 'portrait' && (
+              <form className="toolbar-search" onSubmit={(e) => {
+                e.preventDefault();
+                const q = headerSearch.trim();
+                navigate('download');
+                if (q) window.dispatchEvent(new CustomEvent('hongguo:quick-search', { detail: { query: q } }));
+              }}>
+                <Search size={14} className="toolbar-search-icon" />
+                <input
+                  ref={headerSearchRef}
+                  type="search"
+                  value={headerSearch}
+                  onChange={(e) => setHeaderSearch(e.target.value)}
+                  placeholder={t("搜索短剧名称")}
+                  aria-label={t("搜索短剧")}
+                />
+                <kbd className="toolbar-search-kbd">Ctrl+K</kbd>
+              </form>
+            )}
+            {!mobile && (
+              <button type="button" className="toolbar-icon-btn" title={t("刷新片单")} aria-label={t("刷新片单")}
+                onClick={() => window.dispatchEvent(new CustomEvent('hongguo:refresh-page', { detail: { page } }))}>
+                <RefreshCw size={15} />
+              </button>
+            )}
+            {!mobile && (
+              <button type="button" className="toolbar-icon-btn" title={t("收藏与上新")} aria-label={t("收藏与上新")}
+                onClick={() => navigate('calendar')}>
+                <Bell size={15} />
+              </button>
+            )}
             {!mobile && page === 'player' && <button className="btn btn-outline btn-sm" onClick={() => { setEpisodesOpen(false); toggleStealth(true); }} title={t("小窗置顶播放并在支持的系统上跨虚拟桌面可见；鼠标移开时暂停隐藏，移回继续；Esc 退出")}>{t("小窗模式")}</button>}
             {!mobile && page === 'player' && layout === 'portrait' && <button className="btn btn-outline btn-sm portrait-episodes-toggle" aria-expanded={episodesOpen}
               aria-controls="player-episode-panel" onClick={() => setEpisodesOpen(open => !open)}>{t(episodesOpen ? '收起选集' : '选集')}</button>}

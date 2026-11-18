@@ -25,9 +25,9 @@ export function setPosterSize(size) {
 export function getThemePreference() {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return PREFERENCES.includes(stored) ? stored : 'system';
+    return PREFERENCES.includes(stored) ? stored : 'dark';
   } catch {
-    return 'system';
+    return 'dark';
   }
 }
 

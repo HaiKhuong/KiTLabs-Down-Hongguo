@@ -2,7 +2,7 @@ import { t, useLanguage, getLanguage } from '../i18n';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import useDialogKeyboard from './useDialogKeyboard';
 import './DownloadManager.css';
-import { Download, Trash2, RefreshCw, X, Film, Square, Folder, Zap, CheckSquare, Play, Pause, Layers } from './icons';
+import { Download, Trash2, RefreshCw, X, Film, Square, Folder, Zap, CheckSquare, Play, Pause, Layers, Settings, Info, AlertTriangle, Search, LayoutGrid, List, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from './icons';
 
 const STATUS_TEXT = {
   pending: '等待中',
@@ -59,6 +59,7 @@ function fmtBytes(bytes) {
 }
 
 const PAGE_SIZE = 100;
+const GROUP_PAGE_SIZE = 20;
 
 function DownloadManager({ onNavigate, active = true }) {
   useLanguage();
@@ -75,6 +76,15 @@ function DownloadManager({ onNavigate, active = true }) {
   const [mergeAsk, setMergeAsk] = useState(false);    // 合并格式选择
   const [page, setPage] = useState(1);
   const [seriesFilter, setSeriesFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'completed' | 'failed'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [groupMode, setGroupMode] = useState('grouped'); // 'grouped' | 'list'
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const autoExpandedRef = useRef(false);
+  const [groupPages, setGroupPages] = useState({});
+  const [groupPageInputs, setGroupPageInputs] = useState({});
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [errorDetailTask, setErrorDetailTask] = useState(null);
   const [orderVersion, setOrderVersion] = useState(0);
   const [loadError, setLoadError] = useState('');
   const toastTimerRef = useRef(null);
@@ -491,111 +501,263 @@ function DownloadManager({ onNavigate, active = true }) {
     [selected, taskById]
   );
 
-  useDialogKeyboard(active && !!(confirmAsk || mergeAsk), () => { setConfirmAsk(null); closeMergeDialog(); }, '.dm-container .player-confirm');
+  useDialogKeyboard(active && !!(confirmAsk || mergeAsk || policyOpen || errorDetailTask), () => {
+    setConfirmAsk(null);
+    closeMergeDialog();
+    setPolicyOpen(false);
+    setErrorDetailTask(null);
+  }, '.dm-container .player-confirm');
+
+  const filteredIds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return scopedIds.filter((id) => {
+      const task = taskById.get(id);
+      if (!task) return false;
+      if (statusFilter === 'active' && !['downloading', 'pending'].includes(task.status) && !isWaitingRetry(task)) return false;
+      if (statusFilter === 'completed' && task.status !== 'completed') return false;
+      if (statusFilter === 'failed' && !needsManualRetry(task)) return false;
+      if (q) {
+        const hay = `${seriesLabel(task)} ${task.title || ''} ${task.filename || ''} ${task.hongguoInfo?.vid_index || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [scopedIds, taskById, statusFilter, searchQuery]);
+
+  const dramaGroups = useMemo(() => {
+    const map = new Map();
+    for (const id of filteredIds) {
+      const task = taskById.get(id);
+      if (!task) continue;
+      const key = seriesKey(task);
+      let group = map.get(key);
+      if (!group) {
+        group = {
+          key,
+          seriesId: task.hongguoInfo?.series_id ? String(task.hongguoInfo.series_id) : '',
+          title: seriesLabel(task),
+          cover: task.videoInfo?.cover || '',
+          tasks: [],
+          completed: 0,
+          failed: 0,
+          active: 0,
+          retrying: 0,
+        };
+        map.set(key, group);
+      }
+      if (!group.cover && task.videoInfo?.cover) group.cover = task.videoInfo.cover;
+      group.tasks.push(task);
+      if (task.status === 'completed') group.completed++;
+      else if (needsManualRetry(task)) group.failed++;
+      else if (isWaitingRetry(task)) group.retrying++;
+      else if (task.status === 'downloading' || task.status === 'pending') group.active++;
+    }
+    return [...map.values()];
+  }, [filteredIds, taskById]);
+
+  useEffect(() => {
+    if (!autoExpandedRef.current && dramaGroups.length > 0) {
+      autoExpandedRef.current = true;
+      setExpandedGroups(new Set([dramaGroups[0].key]));
+    }
+  }, [dramaGroups]);
+
+  const toggleGroupExpand = (key) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const retryTaskIds = async (ids) => {
+    if (!ids.length) return;
+    try {
+      const res = await window.electronAPI.retryTasks(ids);
+      await refresh();
+      if (res?.success) showToast(res.count > 0 ? `已重新加入队列：${res.count} 项` : '选中项中没有可重试的任务');
+      else showToast(res?.error || '重试失败', 'error');
+    } catch (error) { showToast(error.message || '重试失败', 'error'); }
+  };
+
+  const listPageCount = Math.max(1, Math.ceil(filteredIds.length / PAGE_SIZE));
+  const listPage = Math.min(page, listPageCount);
+  const visibleListTasks = filteredIds.slice((listPage - 1) * PAGE_SIZE, listPage * PAGE_SIZE).map(id => taskById.get(id)).filter(Boolean);
 
   return (
     <div className="dm-container">
-      <div className="dm-header">
-        <div className="dm-title">
-          <h2>{t("下载管理")}</h2>
+      {/* 4. Downloads Header */}
+      <header className="dm-page-header">
+        <div className="dm-page-header-left">
+          <div className="dm-header-icon"><Download size={22} /></div>
+          <div>
+            <h2>{t("下载管理")}</h2>
+            <p>{t("搜索剧名或粘贴分享链接，选择想保存的集数。")}</p>
+          </div>
         </div>
-        <div className="dm-stats">
-          <span className="stat stat-active">{t("进行中 ")}{t(activeCount)}</span>
-          {retryingCount > 0 && <span className="stat stat-active">{t("等待重试 ")}{t(retryingCount)}</span>}
-          <span className="stat stat-done">{t("已完成 ")}{t(completedCount)}</span>
-          <span className="stat stat-fail">{t("失败/停止 ")}{t(failedCount)}</span>
+        <div className="dm-page-header-right">
+          <div className="dm-stats">
+            <button type="button" className={`stat stat-active ${statusFilter === 'active' ? 'is-active' : ''}`}
+              aria-pressed={statusFilter === 'active'} onClick={() => setStatusFilter(s => s === 'active' ? 'all' : 'active')}>
+              {t("进行中 ")}{activeCount}
+            </button>
+            {retryingCount > 0 && <span className="stat stat-active">{t("等待重试 ")}{retryingCount}</span>}
+            <button type="button" className={`stat stat-done ${statusFilter === 'completed' ? 'is-active' : ''}`}
+              aria-pressed={statusFilter === 'completed'} onClick={() => setStatusFilter(s => s === 'completed' ? 'all' : 'completed')}>
+              {t("已完成 ")}{completedCount}
+            </button>
+            <button type="button" className={`stat stat-fail ${statusFilter === 'failed' ? 'is-active' : ''}`}
+              aria-pressed={statusFilter === 'failed'} onClick={() => setStatusFilter(s => s === 'failed' ? 'all' : 'failed')}>
+              {t("失败/停止 ")}{failedCount}
+            </button>
+          </div>
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => setPolicyOpen(true)}>
+            <Info size={14} /><span>{t("下载风险与使用倡议")}</span>
+          </button>
+          {onNavigate && (
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => onNavigate('settings')}>
+              <Settings size={14} /><span>{t("设置")}</span>
+            </button>
+          )}
+          {onNavigate && (
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => onNavigate('download')}>
+              <Film size={15} /><span>{t("添加下载")}</span>
+            </button>
+          )}
         </div>
-      </div>
+      </header>
 
-      <div className="dm-usage-notice" role="note" aria-label={t("下载风险与使用倡议")}>
-        <p><strong>{t("临时故障会自动重试。")}</strong>{t("红果片源下载遇到断网、超时或传输不完整时，普通故障最多追加 3 次重试，分别等待 10、30、60 秒；注册拒绝或空响应最多追加 6 轮重试，分别等待 15、30、60、120、300、600 秒；来源暂不可用时等待 3、8、15 分钟。等待期间可停止或手动重试，但共享冷却可能让手动重试延后开始。权限限制、磁盘错误等需手动处理；重试后仍失败的任务会保留。")}</p>
-        <p>{t("本软件用于学习研究，建议体验后 24 小时内自行删除；请勿冒充官方或以虚假授权名义收费。开源权利义务以 GPLv3 为准。上述倡议不代表获得平台或版权方授权，也不构成免责承诺。")}</p>
-      </div>
+      {/* 6. Global Download Toolbar */}
+      <div className="dm-global-toolbar">
+        <div className="dm-toolbar-left">
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={resumeAll}
+            disabled={!tasks.some(task => ['stopped', 'failed', 'pending'].includes(task.status))}
+            title={t("全部开始：把所有剧中等待中 / 已停止 / 失败的任务排队开跑")}
+          >
+            <Play size={14} /><span>{t("全部开始")}</span>
+          </button>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={pauseAll}
+            disabled={pausableCount === 0}
+            title={t("全部暂停：暂停所有剧中正在下载、等待中及等待自动重试的任务")}
+          >
+            <Pause size={14} /><span>{t("全部暂停")}</span>
+          </button>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={retryAllFailed}
+            disabled={failedCount === 0}
+            title={t("把所有失败/已停止的任务一次性重新加入下载队列")}
+          >
+            <RefreshCw size={14} /><span>{t(failedCount > 0 ? `重试失败 (${failedCount})` : '重试失败')}</span>
+          </button>
+          <details className="dm-more-actions" ref={moreActionsRef}>
+            <summary>{t("更多操作")}</summary>
+            <div className="dm-more-menu" onClick={event => { const button = event.target.closest('button'); if (button && !button.disabled) moreActionsRef.current.open = false; }}>
+              <button className="btn btn-outline" onClick={selectAllFailed} disabled={failedCount === 0}>
+                <CheckSquare size={14} /><span>{t(failedCount > 0 ? `选中失败项 (${failedCount})` : '选中失败项')}</span>
+              </button>
+              <button className="btn btn-outline" onClick={retrySelected} disabled={retryableSelectedCount === 0}>
+                <RefreshCw size={14} /><span>{t("重试选中 (")}{retryableSelectedCount})</span>
+              </button>
+              <button className="btn btn-outline" onClick={clearCompleted} disabled={completedCount === 0}>
+                <X size={14} /><span>{t("清空已完成")}</span>
+              </button>
+              <button className="btn btn-outline" onClick={clearSelection} disabled={selected.size === 0}>
+                <span>{t("取消选择")}</span>
+              </button>
+              <button className="btn btn-outline" onClick={async () => {
+                const r = await window.electronAPI.rescanDownloads();
+                await refresh();
+                await loadSeriesList();
+                showToast(r && r.success
+                  ? (r.count > 0 ? `已从磁盘补回 ${r.count} 条下载记录` : '没有发现未登记的文件')
+                  : '扫描失败');
+              }}>
+                <RefreshCw size={14} /><span>{t("扫描下载目录")}</span>
+              </button>
+            </div>
+          </details>
+        </div>
 
-      <div className="dm-toolbar">
-        <button
-          className="btn btn-primary"
-          onClick={resumeAll}
-          disabled={!tasks.some(task => ['stopped', 'failed', 'pending'].includes(task.status))}
-          title={t("全部开始：把所有剧中等待中 / 已停止 / 失败的任务排队开跑")}
-        >
-          <Play size={15} />{t("全部开始")}</button>
-        <button
-          className="btn btn-outline"
-          onClick={pauseAll}
-          disabled={pausableCount === 0}
-          title={t("全部暂停：暂停所有剧中正在下载、等待中及等待自动重试的任务")}
-        >
-          <Pause size={15} />{t("全部暂停")}</button>
-        <button
-          className="btn btn-outline"
-          onClick={retryAllFailed}
-          disabled={failedCount === 0}
-          title={t("把所有失败/已停止的任务一次性重新加入下载队列")}
-        >
-          <Zap size={15} />
-          {t(failedCount > 0 ? `重试失败 (${failedCount})` : '重试失败')}
-        </button>
-        <details className="dm-more-actions" ref={moreActionsRef}><summary>{t("更多操作")}</summary><div className="dm-more-menu" onClick={event => { const button = event.target.closest('button'); if (button && !button.disabled) moreActionsRef.current.open = false; }}>
-        <button
-          className="btn btn-outline"
-          onClick={selectAllFailed}
-          disabled={failedCount === 0}
-          title={t("一键勾选所有失败/已停止的任务")}
-        >
-          <CheckSquare size={15} />
-          {t(failedCount > 0 ? `选中失败项 (${failedCount})` : '选中失败项')}
-        </button>
-        <button className="btn btn-outline" onClick={retrySelected} disabled={retryableSelectedCount === 0}>
-          <RefreshCw size={15} />{t("重试选中 (")}{t(retryableSelectedCount)})
-        </button>
-        <button className="btn btn-outline" onClick={clearCompleted} disabled={completedCount === 0}>
-          <X size={15} />{t("清空已完成")}</button>
-        <button className="btn btn-outline" onClick={clearSelection} disabled={selected.size === 0}>{t("取消选择")}</button>
-        <button
-          className="btn btn-outline"
-          onClick={async () => {
-            const r = await window.electronAPI.rescanDownloads();
-            await refresh();
-            await loadSeriesList();
-            showToast(r && r.success
-              ? (r.count > 0 ? `已从磁盘补回 ${r.count} 条下载记录` : '没有发现未登记的文件')
-              : '扫描失败');
-          }}
-          title={t("扫描下载目录，把磁盘上已有但列表里没有的文件补登记回来")}
-        >
-          <RefreshCw size={15} />{t("扫描下载目录")}</button>
-        </div></details>
-        {seriesList.length > 0 && (
-          <div className="merge-inline">
+        <div className="dm-toolbar-right">
+          <div className="dm-search-wrap">
+            <Search size={14} />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+              placeholder={t("搜索剧名…")}
+              aria-label={t("搜索剧名…")}
+            />
+          </div>
+          <div className="browse-view-toggle" role="group" aria-label="View mode">
+            <button type="button" className={groupMode === 'grouped' ? 'active' : ''} onClick={() => setGroupMode('grouped')} title="Grouped view" aria-label="Grouped view">
+              <LayoutGrid size={14} />
+            </button>
+            <button type="button" className={groupMode === 'list' ? 'active' : ''} onClick={() => setGroupMode('list')} title="List view" aria-label="List view">
+              <List size={14} />
+            </button>
+          </div>
+          {seriesOptions.length > 0 && (
             <select
-              className="input-field merge-select"
-              value={mergeSeriesId}
-              onFocus={() => loadSeriesList()}
-              onChange={(e) => setMergeSeriesId(e.target.value)}
-              title={t("选择要合并的短剧")}
+              id="dm-series-select"
+              className="dm-series-select"
+              value={activeFilter}
+              aria-label={t("按剧集查看")}
+              onChange={(event) => {
+                setSeriesFilter(event.target.value);
+                setSelected(new Set());
+                setPage(1);
+              }}
             >
-              {seriesList.map((s) => (
-                <option key={s.series_id} value={String(s.series_id)}>
-                  {s.series_title}
+              <option value="">{t("全部剧集（{0} 项）", [tasks.length])}</option>
+              {seriesOptions.map(option => (
+                <option key={option.key} value={option.key}>
+                  {option.label} ({option.count})
                 </option>
               ))}
             </select>
-            <button className="btn btn-outline" onClick={openMergeDialog} disabled={merging} title={t("把该剧已下载的分集合并成单个 mp4")}>
-              <Layers size={15} />
-              {t(merging ? '合并中...' : '合并整部剧')}
-            </button>
-          </div>
-        )}
-        {onNavigate && (
-          <button className="btn btn-primary dm-toolbar-end" onClick={() => onNavigate('download')}>
-            <Film size={15} />{t("添加下载")}</button>
-        )}
+          )}
+        </div>
       </div>
 
-      {seriesList.length > 0 && <p className="settings-hint dm-merge-hint">{t("选择剧名后点“合并整部剧”，导出该剧全部已下载分集，无需勾选任务。")}</p>}
+      {/* Active Queue Banner */}
+      {queue.active > 0 && (
+        <div className="dm-queue-bar">
+          <span className="dm-queue-running">
+            <span className="dm-queue-pulse" />{t("正在并发下载 ")}<b>{t(queue.active)}</b> / {t(queue.maxConcurrent)}
+            {queue.queued > 0 ? <>{t(" · 队列等待 ")}<b>{t(queue.queued)}</b></> : null}
+          </span>
+          <span className="dm-queue-hint">{t("并发数可在「设置 → 最大并发下载数」调整")}</span>
+        </div>
+      )}
 
-      {/* 合并任务 */}
+      {/* Contextual Bulk Action Bar (List view only) */}
+      {groupMode === 'list' && selected.size > 0 && (
+        <div className="dm-bulk-bar dm-bulk-bar-right" role="region" aria-label={t("更多操作")}>
+          <span className="dm-bulk-count">{t("已选 ")}{selected.size}{t(" 项")}</span>
+          <div className="dm-bulk-actions">
+            {retryableSelectedCount > 0 && (
+              <button type="button" className="btn btn-primary btn-sm" onClick={retrySelected}>
+                <RefreshCw size={13} /><span>{t("重试选中 (")}{retryableSelectedCount})</span>
+              </button>
+            )}
+            <button type="button" className="btn btn-outline btn-sm" onClick={deleteSelected}>
+              <Trash2 size={13} /><span>{t("删除已选（")}{selected.size}{t("项）")}</span>
+            </button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={clearSelection}>
+              <span>{t("取消选择")}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Tasks Progress */}
       {mergeTasks.length > 0 && (
         <div className="merge-list">
           {mergeTasks.map((m) => (
@@ -661,152 +823,386 @@ function DownloadManager({ onNavigate, active = true }) {
         </div>
       )}
 
-      {queue.active > 0 && (
-        <div className="dm-queue-bar">
-          <span className="dm-queue-running">
-            <span className="dm-queue-pulse" />{t("正在并发下载 ")}<b>{t(queue.active)}</b> / {t(queue.maxConcurrent)}
-            {queue.queued > 0 ? <>{t(" · 队列等待 ")}<b>{t(queue.queued)}</b></> : null}
-          </span>
-          <span className="dm-queue-hint">{t("并发数可在「设置 → 最大并发下载数」调整")}</span>
-        </div>
-      )}
-
-      {retryableSelectedCount > 0 && (
-        <div className="dm-hint">{t("已选中 ")}<b>{t(retryableSelectedCount)}</b>{t(" 个失败项，点")}<b>{t("「重试选中」")}</b>{t(" 即会重新下载（无需重新解析）。")}</div>
-      )}
-
       {loadError && <div className="alert alert-error" role="alert">{t(loadError)}<button className="btn btn-outline btn-sm" onClick={refresh}>{t("重新加载")}</button></div>}
-      {seriesOptions.length > 1 && (
-        <div className="dm-series-filter">
-          <label htmlFor="dm-series-select">{t("按剧集查看")}</label>
-          <select id="dm-series-select" className="input-field dm-series-select" value={activeFilter}
-            onChange={(event) => {
-              setSeriesFilter(event.target.value);
-              setSelected(new Set());
-              setPage(1);
-            }}
-            title={t("选择一部剧后，列表、统计和批量重试只作用于该剧；不选则作用于全部")}>
-            <option value="">{t("全部剧集（{0} 项）", [tasks.length])}</option>
-            {seriesOptions.map(option => (
-              <option key={option.key} value={option.key}>
-                {option.label} · {option.count}{option.waiting ? ` · ${t('等待重试')} ${option.waiting}` : ''}{option.failed ? ` · ${t('待重试')} ${option.failed}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      {scopedTasks.length > 0 && <div className="dm-pagination">
-        <div className="dm-selection-summary">
-          <button className="btn btn-outline btn-sm" onClick={allSelected ? clearSelection : selectAll}
-            title={activeFilter
-              ? t(allSelected ? '取消当前剧的分页选择' : '选中当前剧 {0} 项，包含其他分页', [scopedTasks.length])
-              : t(allSelected ? '取消所有分页中的选择' : '选中全部 {0} 项，包含其他分页', [scopedTasks.length])}>
-            <CheckSquare size={15} />{t(allSelected ? '取消全选' : '全选')}
-          </button>
-          <button className="btn btn-outline btn-sm" onClick={deleteSelected} disabled={selected.size === 0}
-            title={t("删除所有分页中已选的任务，确认时可选择是否同时删除本地文件")}>
-            <Trash2 size={15} />{t("删除已选（")}{t(selected.size)}{t("项）")}</button>
-        <span>{t("共 ")}{t(scopedIds.length)}{t(" 项 · 当前 ")}{t(scopedIds.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0)}-{t(Math.min(currentPage * PAGE_SIZE, scopedIds.length))}{t(" 项")}{t(selected.size > 0 ? ` · 已选 ${selected.size} 项（跨页保留）` : '')}</span>
-        </div>
-        <nav aria-label={t("下载任务分页")}>
-          <button className="btn btn-outline btn-sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t("上一页")}</button>
-          <span>{t("第 {0} / {1} 页", [currentPage, pageCount])}</span>
-          <button className="btn btn-outline btn-sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>{t("下一页")}</button>
-        </nav>
-      </div>}
 
-      {scopedTasks.length === 0 ? (
+      {/* Empty / No Results / Grouped & List Content */}
+      {tasks.length === 0 ? (
         <div className="dm-empty">
           <Download size={40} />
           <p>{t("暂无下载任务")}</p>
           <p className="dm-empty-sub">{t("搜索剧名或粘贴分享链接，选择想保存的集数。")}</p>
           {onNavigate && <button className="btn btn-primary" onClick={() => onNavigate('download')}>{t("添加第一部短剧")}</button>}
         </div>
-      ) : (
-        <div className="dm-list">
-          {visibleTasks.map((task) => {
+      ) : filteredIds.length === 0 ? (
+        <div className="dm-empty">
+          <Search size={36} />
+          <p>{t("没有找到相关短剧")}</p>
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => { setStatusFilter('all'); setSearchQuery(''); setSeriesFilter(''); }}>
+            {t("恢复默认")}
+          </button>
+        </div>
+      ) : groupMode === 'grouped' ? (
+        <div className="dm-groups-list">
+          {dramaGroups.map((group) => {
+            const isExpanded = expandedGroups.has(group.key);
+            const total = group.tasks.length;
+            const pct = total > 0 ? Math.round((group.completed / total) * 1000) / 10 : 0;
+            const groupRetryIds = group.tasks.filter(needsManualRetry).map(item => item.id);
+            const groupResumableIds = group.tasks.filter(item => ['stopped', 'failed'].includes(item.status)).map(item => item.id);
+            const firstTask = group.tasks[0];
+            const gPages = Math.max(1, Math.ceil(total / GROUP_PAGE_SIZE));
+            const gPage = Math.min(groupPages[group.key] || 1, gPages);
+            const visibleGroupTasks = group.tasks.slice((gPage - 1) * GROUP_PAGE_SIZE, gPage * GROUP_PAGE_SIZE);
+            const groupAllSelected = total > 0 && group.tasks.every(item => selected.has(item.id));
+            const groupSelectedTasks = group.tasks.filter(item => selected.has(item.id));
+            const groupSelectedCount = groupSelectedTasks.length;
+            const groupRetryableSelectedIds = groupSelectedTasks.filter(needsManualRetry).map(item => item.id);
+            const canMergeGroup = group.seriesId && seriesList.some(s => String(s.series_id) === group.seriesId);
 
-            const isSel = selected.has(task.id);
-            const waitingRetry = isWaitingRetry(task);
-            const canStop = task.status === 'downloading' || task.status === 'pending' || waitingRetry;
-            const canRetry = task.status === 'failed' || task.status === 'stopped';
-            const pct = task.progress || 0;
             return (
-              <div key={task.id} className={`dm-task ${isSel ? 'selected' : ''}`} onClick={() => toggleSelect(task.id)}>
-                <input className="dm-task-select" type="checkbox" aria-label={t(`选择 ${task.title || task.filename}`)} checked={isSel} onClick={(e) => e.stopPropagation()} onChange={() => toggleSelect(task.id)} />
-                <div className="dm-task-cover">
-                  {task.videoInfo && task.videoInfo.cover ? (
-                    <img src={task.videoInfo.cover} alt="" />
-                  ) : (
-                    <div className="cover-placeholder"><Film size={18} /></div>
-                  )}
-                </div>
-                <div className="dm-task-body">
-                  <div className="dm-task-title">{(task.title || task.filename)}</div>
-                  <div className="dm-task-meta">
-                    <span className={`status-tag status-${waitingRetry ? 'pending' : task.status}`}>{t(waitingRetry ? '等待重试' : STATUS_TEXT[task.status] || task.status)}</span>
-                    {waitingRetry && <span className="dm-size">{t("自动重试 ")}{t(task.sourceRetries)}/{t(task.sourceRetryLimit || 3)} · {t(new Date(task.retryAt).toLocaleTimeString(getLanguage(), { hour12: false }))}{t(" 后排队")}</span>}
-                    {task.status === 'downloading' && task.totalBytes > 0 && (
-                      <span className="dm-size">{t(fmtBytes(task.receivedBytes))} / {t(fmtBytes(task.totalBytes))}</span>
-                    )}
-                    {['failed', 'stopped'].includes(task.status) && task.error && <span className="dm-error">{t(task.error)}</span>}
+              <section className={`dm-drama-card ${isExpanded ? 'is-expanded' : ''}`} key={group.key}>
+                {/* 7 & 11. Drama Card Header */}
+                <div className="dm-drama-header" onClick={() => toggleGroupExpand(group.key)}>
+                  <div className="dm-drama-poster">
+                    {group.cover ? <img src={group.cover} alt={group.title} loading="lazy" /> : <div className="cover-placeholder"><Film size={20} /></div>}
                   </div>
-                  {['downloading', 'completed'].includes(task.status) && task.qualityNotice && <div className="dm-quality-notice">{t(task.qualityNotice)}</div>}
-                  {task.nasWarning && <div className="dm-error">{t(task.nasWarning)}</div>}
-                  {task.metadataWarning && <div className="dm-error">{t(task.metadataWarning)}</div>}
-                  {(task.status === 'downloading' || task.status === 'pending') && (
-                    <div className="dm-progress">
-                      <div className="dm-progress-bar">
-                        <div className="dm-progress-fill" style={{ width: pct + '%' }}></div>
-                      </div>
-                      <span className="dm-pct">{t(pct)}%</span>
+                  <div className="dm-drama-info">
+                    <h3 className="dm-drama-title">《{group.title}》</h3>
+                    <div className="dm-drama-stats-row">
+                      <span>{t("{0} 集", [total])}</span>
+                      <span className="is-success">{t("已完成 ")}{group.completed}</span>
+                      {group.active > 0 && <span className="is-info">{t("进行中 ")}{group.active}</span>}
+                      {group.failed > 0 && <span className="is-danger">{t("失败/停止 ")}{group.failed}</span>}
                     </div>
-                  )}
+                    <div className="dm-drama-progress-row">
+                      <div className="dm-drama-progress-track">
+                        <div className="dm-drama-progress-fill" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="dm-drama-progress-pct">{pct.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  <div className="dm-drama-header-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="dm-drama-actions">
+                      {groupResumableIds.length > 0 && (
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => retryTaskIds(groupResumableIds)} title={t("全部开始")}>
+                          <Play size={13} /><span>{t("全部开始")}</span>
+                        </button>
+                      )}
+                      {groupRetryIds.length > 0 && (
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => retryTaskIds(groupRetryIds)} title={t("重试失败")}>
+                          <RefreshCw size={13} /><span>{t("重试")}</span>
+                        </button>
+                      )}
+                      {canMergeGroup && (
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => { setMergeSeriesId(group.seriesId); setTimeout(openMergeDialog, 0); }} disabled={merging} title={t("合并整部剧")}>
+                          <Layers size={13} /><span>{t("合并整部剧")}</span>
+                        </button>
+                      )}
+                      {firstTask && (
+                        <button type="button" className="icon-btn" onClick={() => openTaskFolder(firstTask.id)} title={t("打开文件夹")} aria-label={t("打开文件夹")}>
+                          <Folder size={15} />
+                        </button>
+                      )}
+                      <button type="button" className="icon-btn dm-expand-btn" onClick={() => toggleGroupExpand(group.key)}
+                        aria-expanded={isExpanded} title={t(isExpanded ? '折叠组' : '展开组')} aria-label={t(isExpanded ? '折叠组' : '展开组')}>
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                    </div>
+                    {groupSelectedCount > 0 && (
+                      <div className="dm-bulk-bar dm-drama-bulk" role="region" aria-label={t("更多操作")}>
+                        <span className="dm-bulk-count">{t("已选 ")}{groupSelectedCount}{t(" 项")}</span>
+                        <div className="dm-bulk-actions">
+                          {groupRetryableSelectedIds.length > 0 && (
+                            <button type="button" className="btn btn-primary btn-sm" onClick={() => retryTaskIds(groupRetryableSelectedIds)}>
+                              <RefreshCw size={12} /><span>{t("重试选中 (")}{groupRetryableSelectedIds.length})</span>
+                            </button>
+                          )}
+                          <button type="button" className="btn btn-outline btn-sm" onClick={() => askDelete(groupSelectedTasks, `删除所选 ${groupSelectedCount} 项`)}>
+                            <Trash2 size={12} /><span>{t("删除已选（")}{groupSelectedCount}{t("项）")}</span>
+                          </button>
+                          <button type="button" className="btn btn-outline btn-sm" onClick={() => {
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              groupSelectedTasks.forEach(item => next.delete(item.id));
+                              return next;
+                            });
+                          }}>
+                            <span>{t("取消选择")}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="dm-task-actions" onClick={(e) => e.stopPropagation()}>
-                  {canStop && (
-                    <button className="icon-btn" title={t(waitingRetry ? '停止自动重试' : '停止')} onClick={async () => {
-                      try {
-                        const result = await window.electronAPI.stopDownload(task.id);
-                        if (!result?.success) throw new Error(result?.error || '停止失败');
-                        await refresh();
-                      } catch (error) { showToast(error.message || '停止失败', 'error'); }
-                    }}>
-                      <Square size={16} />
-                    </button>
-                  )}
-                  {canRetry && (
-                    <button className="icon-btn" title={t(waitingRetry ? '手动重试（共享冷却可能延后开始）' : '重试')} onClick={async () => {
-                      try {
-                        const result = await window.electronAPI.retryTask(task.id);
-                        if (!result?.success) throw new Error(result?.error || '重试失败');
-                      } catch (error) { showToast(error.message || '重试失败', 'error'); }
-                    }}>
-                      <RefreshCw size={16} />
-                    </button>
-                  )}
-                  <button className="icon-btn" title={t("打开文件夹")} onClick={() => openTaskFolder(task.id)}>
-                    <Folder size={16} />
-                  </button>
-                  <button
-                    className="icon-btn icon-btn-danger"
-                    title={t("删除任务（可选是否同时删除本地文件）")}
-                    onClick={() => {
-                      askDelete([task], `删除《${task.hongguoInfo && task.hongguoInfo.series_title ? task.hongguoInfo.series_title : ''}》第 ${task.hongguoInfo ? task.hongguoInfo.vid_index : ''} 集任务`);
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
+
+                {/* 8. Expandable Episode Table */}
+                {isExpanded && (
+                  <div className="dm-table-wrap">
+                    <div className="dm-table-scroll">
+                      <table className="dm-ep-table">
+                      <thead>
+                        <tr>
+                          <th className="col-check">
+                            <input type="checkbox" checked={groupAllSelected} aria-label={t("全选")}
+                              onChange={() => {
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (groupAllSelected) group.tasks.forEach(item => next.delete(item.id));
+                                  else group.tasks.forEach(item => next.add(item.id));
+                                  return next;
+                                });
+                              }} />
+                          </th>
+                          <th>{t("集数")}</th>
+                          <th>{t("当前")}</th>
+                          <th>{t("进度")}</th>
+                          <th className="col-size">{t("本地已占用")}</th>
+                          <th className="col-actions">{t("更多操作")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleGroupTasks.map((task) => {
+                          const isSel = selected.has(task.id);
+                          const waitingRetry = isWaitingRetry(task);
+                          const canStop = task.status === 'downloading' || task.status === 'pending' || waitingRetry;
+                          const canRetry = task.status === 'failed' || task.status === 'stopped';
+                          const pctVal = task.status === 'completed' ? 100 : (task.progress || 0);
+                          const epLabel = task.hongguoInfo?.vid_index != null
+                            ? t("第 {0} 集", [String(task.hongguoInfo.vid_index).padStart(3, '0')])
+                            : (task.title || task.filename);
+                          const sizeBytes = task.totalBytes || task.receivedBytes || 0;
+                          const statusClass = waitingRetry ? 'retrying' : task.status;
+
+                          return (
+                            <tr key={task.id} className={isSel ? 'is-selected' : ''} onClick={() => toggleSelect(task.id)}>
+                              <td className="col-check" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={isSel} aria-label={epLabel} onChange={() => toggleSelect(task.id)} />
+                              </td>
+                              <td>
+                                <div className="dm-ep-cell">
+                                  <Film size={14} className="dm-ep-icon" />
+                                  <span className="dm-ep-name">{epLabel}</span>
+                                </div>
+                              </td>
+                              <td>
+                                <div className="dm-status-cell">
+                                  <span className={`dm-status-badge status-${statusClass}`}>
+                                    {t(waitingRetry ? '等待重试' : STATUS_TEXT[task.status] || task.status)}
+                                  </span>
+                                  {['failed', 'stopped'].includes(task.status) && task.error && (
+                                    <button type="button" className="dm-err-link" title={task.error}
+                                      onClick={(e) => { e.stopPropagation(); setErrorDetailTask(task); }}>
+                                      {t(task.error)}
+                                    </button>
+                                  )}
+                                  {['downloading', 'completed'].includes(task.status) && task.qualityNotice && (
+                                    <span className="dm-quality-note">{t(task.qualityNotice)}</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td>
+                                {task.status === 'completed' || task.status === 'downloading' || task.status === 'pending' ? (
+                                  <div className="dm-row-progress">
+                                    <div className="dm-row-progress-track">
+                                      <div className={`dm-row-progress-fill is-${statusClass}`} style={{ width: `${pctVal}%` }} />
+                                    </div>
+                                    <span>{pctVal}%</span>
+                                  </div>
+                                ) : (
+                                  <span className="dm-muted">—</span>
+                                )}
+                              </td>
+                              <td className="col-size">
+                                <span className="dm-size-text">{sizeBytes > 0 ? fmtBytes(sizeBytes) : '—'}</span>
+                              </td>
+                              <td className="col-actions" onClick={(e) => e.stopPropagation()}>
+                                <div className="dm-row-actions">
+                                  {canStop && (
+                                    <button type="button" className="icon-btn" title={t(waitingRetry ? '停止自动重试' : '停止')} onClick={async () => {
+                                      try {
+                                        const result = await window.electronAPI.stopDownload(task.id);
+                                        if (!result?.success) throw new Error(result?.error || '停止失败');
+                                        await refresh();
+                                      } catch (error) { showToast(error.message || '停止失败', 'error'); }
+                                    }}><Square size={14} /></button>
+                                  )}
+                                  {canRetry && (
+                                    <button type="button" className="icon-btn" title={t('重试')} onClick={async () => {
+                                      try {
+                                        const result = await window.electronAPI.retryTask(task.id);
+                                        if (!result?.success) throw new Error(result?.error || '重试失败');
+                                      } catch (error) { showToast(error.message || '重试失败', 'error'); }
+                                    }}><RefreshCw size={14} /></button>
+                                  )}
+                                  <button type="button" className="icon-btn" title={t("打开文件夹")} onClick={() => openTaskFolder(task.id)}>
+                                    <Folder size={14} />
+                                  </button>
+                                  <button type="button" className="icon-btn icon-btn-danger" title={t("删除")}
+                                    onClick={() => askDelete([task], `删除《${group.title}》第 ${task.hongguoInfo ? task.hongguoInfo.vid_index : ''} 集任务`)}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      </table>
+                    </div>
+
+                    {/* 10. Table Footer & Pagination */}
+                    <div className="dm-table-footer">
+                      <div className="dm-table-footer-left">
+                        <label className="dm-footer-check">
+                          <input type="checkbox" checked={groupAllSelected} onChange={() => {
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (groupAllSelected) group.tasks.forEach(item => next.delete(item.id));
+                              else group.tasks.forEach(item => next.add(item.id));
+                              return next;
+                            });
+                          }} />
+                          <span>{t("全选")} ({total})</span>
+                        </label>
+                        {groupSelectedCount > 0 && <span className="dm-footer-selected">{t("已选 ")}{groupSelectedCount}</span>}
+                      </div>
+                      {gPages > 1 && (
+                        <div className="dm-table-pager">
+                          <button type="button" className="pager-item" disabled={gPage <= 1} onClick={() => setGroupPages(p => ({ ...p, [group.key]: gPage - 1 }))}>
+                            <ChevronLeft size={13} />
+                          </button>
+                          <span className="dm-pager-text">{gPage} / {gPages}</span>
+                          <button type="button" className="pager-item" disabled={gPage >= gPages} onClick={() => setGroupPages(p => ({ ...p, [group.key]: gPage + 1 }))}>
+                            <ChevronRight size={13} />
+                          </button>
+                          <form className="dm-goto-form" onSubmit={(e) => {
+                            e.preventDefault();
+                            const n = Math.min(Math.max(1, Number(groupPageInputs[group.key]) || 1), gPages);
+                            setGroupPages(p => ({ ...p, [group.key]: n }));
+                          }}>
+                            <input
+                              type="number"
+                              min={1}
+                              max={gPages}
+                              value={groupPageInputs[group.key] ?? ''}
+                              onChange={(e) => setGroupPageInputs(p => ({ ...p, [group.key]: e.target.value }))}
+                              placeholder={String(gPage)}
+                              aria-label={t("页")}
+                            />
+                            <button type="submit" className="btn btn-outline btn-sm">{t("应用")}</button>
+                          </form>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
             );
           })}
+        </div>
+      ) : (
+        /* Flat List View */
+        <div className="dm-list-wrap">
+          <div className="dm-list">
+            {visibleListTasks.map((task) => {
+              const isSel = selected.has(task.id);
+              const waitingRetry = isWaitingRetry(task);
+              const canStop = task.status === 'downloading' || task.status === 'pending' || waitingRetry;
+              const canRetry = task.status === 'failed' || task.status === 'stopped';
+              const pct = task.progress || 0;
+              return (
+                <div key={task.id} className={`dm-task ${isSel ? 'selected' : ''}`} onClick={() => toggleSelect(task.id)}>
+                  <input className="dm-task-select" type="checkbox" aria-label={t(`选择 ${task.title || task.filename}`)} checked={isSel} onClick={(e) => e.stopPropagation()} onChange={() => toggleSelect(task.id)} />
+                  <div className="dm-task-cover">
+                    {task.videoInfo?.cover ? <img src={task.videoInfo.cover} alt="" /> : <div className="cover-placeholder"><Film size={18} /></div>}
+                  </div>
+                  <div className="dm-task-body">
+                    <div className="dm-task-title">{task.title || task.filename}</div>
+                    <div className="dm-task-meta">
+                      <span className={`dm-status-badge status-${waitingRetry ? 'retrying' : task.status}`}>{t(waitingRetry ? '等待重试' : STATUS_TEXT[task.status] || task.status)}</span>
+                      {['failed', 'stopped'].includes(task.status) && task.error && (
+                        <button type="button" className="dm-err-link" onClick={(e) => { e.stopPropagation(); setErrorDetailTask(task); }}>{t(task.error)}</button>
+                      )}
+                    </div>
+                    {(task.status === 'downloading' || task.status === 'pending') && (
+                      <div className="dm-progress">
+                        <div className="dm-progress-bar"><div className="dm-progress-fill" style={{ width: `${pct}%` }} /></div>
+                        <span className="dm-pct">{pct}%</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="dm-task-actions" onClick={(e) => e.stopPropagation()}>
+                    {canStop && (
+                      <button className="icon-btn" title={t(waitingRetry ? '停止自动重试' : '停止')} onClick={async () => {
+                        try {
+                          const result = await window.electronAPI.stopDownload(task.id);
+                          if (!result?.success) throw new Error(result?.error || '停止失败');
+                          await refresh();
+                        } catch (error) { showToast(error.message || '停止失败', 'error'); }
+                      }}><Square size={15} /></button>
+                    )}
+                    {canRetry && (
+                      <button className="icon-btn" title={t('重试')} onClick={async () => {
+                        try {
+                          const result = await window.electronAPI.retryTask(task.id);
+                          if (!result?.success) throw new Error(result?.error || '重试失败');
+                        } catch (error) { showToast(error.message || '重试失败', 'error'); }
+                      }}><RefreshCw size={15} /></button>
+                    )}
+                    <button className="icon-btn" title={t("打开文件夹")} onClick={() => openTaskFolder(task.id)}><Folder size={15} /></button>
+                    <button className="icon-btn icon-btn-danger" title={t("删除")} onClick={() => askDelete([task], `删除《${seriesLabel(task)}》`)}><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {listPageCount > 1 && (
+            <div className="dm-table-pager" style={{ justifyContent: 'center', marginTop: 12 }}>
+              <button className="btn btn-outline btn-sm" disabled={listPage <= 1} onClick={() => setPage(listPage - 1)}>{t("上一页")}</button>
+              <span className="dm-pager-text">{t("第 {0} / {1} 页", [listPage, listPageCount])}</span>
+              <button className="btn btn-outline btn-sm" disabled={listPage >= listPageCount} onClick={() => setPage(listPage + 1)}>{t("下一页")}</button>
+            </div>
+          )}
         </div>
       )}
 
       {toast && (
         <div className={`dm-toast dm-toast-${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'} onClick={() => setToast(null)}>
           {toast.text}
+        </div>
+      )}
+
+      {/* 12. Download Policy Dialog */}
+      {policyOpen && (
+        <div className="player-confirm-mask" onClick={() => setPolicyOpen(false)}>
+          <div className="player-confirm" role="dialog" aria-modal="true" aria-label={t("下载风险与使用倡议")} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+            <div className="player-confirm-title"><Info size={17} /><span>{t("下载风险与使用倡议")}</span></div>
+            <div className="player-confirm-msg">
+              <p><strong>{t("临时故障会自动重试。")}</strong>{t("红果片源下载遇到断网、超时或传输不完整时，普通故障最多追加 3 次重试，分别等待 10、30、60 秒；注册拒绝或空响应最多追加 6 轮重试，分别等待 15、30、60、120、300、600 秒；来源暂不可用时等待 3、8、15 分钟。等待期间可停止或手动重试，但共享冷却可能让手动重试延后开始。权限限制、磁盘错误等需手动处理；重试后仍失败的任务会保留。")}</p>
+              <p>{t("本软件用于学习研究，建议体验后 24 小时内自行删除；请勿冒充官方或以虚假授权名义收费。开源权利义务以 GPLv3 为准。上述倡议不代表获得平台或版权方授权，也不构成免责承诺。")}</p>
+            </div>
+            <div className="player-confirm-foot">
+              <button className="btn btn-primary" onClick={() => setPolicyOpen(false)}>{t("关闭")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. Error Details Dialog */}
+      {errorDetailTask && (
+        <div className="player-confirm-mask" onClick={() => setErrorDetailTask(null)}>
+          <div className="player-confirm" role="dialog" aria-modal="true" aria-label={t("失败")} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+            <div className="player-confirm-title" style={{ color: 'var(--danger)' }}><AlertTriangle size={17} /><span>{errorDetailTask.title || errorDetailTask.filename}</span></div>
+            <div className="player-confirm-msg">
+              <p>{errorDetailTask.error}</p>
+              {errorDetailTask.nasWarning && <p>{errorDetailTask.nasWarning}</p>}
+              {errorDetailTask.metadataWarning && <p>{errorDetailTask.metadataWarning}</p>}
+            </div>
+            <div className="player-confirm-foot">
+              <button className="btn btn-outline" onClick={() => setErrorDetailTask(null)}>{t("关闭")}</button>
+              <button className="btn btn-primary" onClick={() => { const id = errorDetailTask.id; setErrorDetailTask(null); retryTaskIds([id]); }}>{t("重试")}</button>
+            </div>
+          </div>
         </div>
       )}
 
